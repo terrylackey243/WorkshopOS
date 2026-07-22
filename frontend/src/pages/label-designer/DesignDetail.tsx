@@ -1,6 +1,7 @@
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Download, Loader2 } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import axios from "axios";
+import { Download, Loader2, RefreshCw } from "lucide-react";
 import { useParams } from "react-router-dom";
 
 import { StlPreview } from "@/components/StlPreview";
@@ -23,6 +24,7 @@ function slugForFilename(name: string): string {
 
 export function DesignDetail() {
   const { designId } = useParams();
+  const queryClient = useQueryClient();
 
   const designQuery = useQuery({
     queryKey: ["designs", designId],
@@ -37,13 +39,23 @@ export function DesignDetail() {
   const design = designQuery.data;
   const isGenerated = design?.status === "generated";
 
+  // Regenerating overwrites the STL files at the exact same on-disk paths
+  // (see routers/designs.py), so the request URL alone can't tell a fresh
+  // file from a stale cached one. Keying on `generated_at` (which gets a
+  // new value every time generation completes) forces a real refetch on
+  // every regeneration instead of depending on the `enabled` flag's
+  // false->true transition to trigger one -- that transition doesn't
+  // reliably cause TanStack Query to refetch an already-invalidated query,
+  // which is why regenerating previously left the old STL showing until a
+  // full page reload. Same fix, same reasoning as the Tool Photos feature's
+  // `tool.id, tool.updated_at` query key.
   const outlineBlobQuery = useQuery({
-    queryKey: ["design-file", designId, "outline"],
+    queryKey: ["design-file", designId, "outline", design?.generated_at],
     queryFn: () => fetchDesignFile(designId as string, "outline"),
     enabled: !!designId && isGenerated,
   });
   const textBlobQuery = useQuery({
-    queryKey: ["design-file", designId, "text"],
+    queryKey: ["design-file", designId, "text", design?.generated_at],
     queryFn: () => fetchDesignFile(designId as string, "text"),
     enabled: !!designId && isGenerated,
   });
@@ -51,7 +63,7 @@ export function DesignDetail() {
   // -- an unlinked label never produces a qr_stl_path, so this query simply
   // never runs for the common case.
   const qrBlobQuery = useQuery({
-    queryKey: ["design-file", designId, "qr"],
+    queryKey: ["design-file", designId, "qr", design?.generated_at],
     queryFn: () => fetchDesignFile(designId as string, "qr"),
     enabled: !!designId && isGenerated && !!design?.tool_id,
   });
@@ -87,6 +99,28 @@ export function DesignDetail() {
     };
   }, [qrBlobQuery.data]);
 
+  const regenerateMutation = useMutation({
+    mutationFn: () => designsApi.regenerate(designId as string),
+    onSuccess: () => {
+      // Regenerating re-derives parameters from the label style / magnet
+      // profile's *current* values and re-enqueues generation server-side
+      // (see routers/designs.py) -- the design flips back to "queued".
+      // Invalidating this drives the polling refetch below, which picks up
+      // the new `generated_at` once done; the blob queries above are keyed
+      // on that value, so they refetch fresh automatically -- no separate
+      // invalidation of them needed here.
+      queryClient.invalidateQueries({ queryKey: ["designs", designId] });
+    },
+  });
+
+  const regenerateError =
+    regenerateMutation.isError && axios.isAxiosError(regenerateMutation.error) &&
+    typeof regenerateMutation.error.response?.data?.detail === "string"
+      ? regenerateMutation.error.response.data.detail
+      : regenerateMutation.isError
+        ? "Failed to regenerate label."
+        : null;
+
   if (designQuery.isLoading) {
     return <p className="p-4 text-sm text-muted-foreground">Loading design…</p>;
   }
@@ -95,13 +129,28 @@ export function DesignDetail() {
   }
 
   const stem = slugForFilename(design.name);
+  const isRegenerating = design.status === "queued" || regenerateMutation.isPending;
 
   return (
     <div className="flex h-full flex-col gap-4 p-4">
-      <div>
-        <h1 className="text-base font-semibold">{design.name}</h1>
-        <p className="text-sm text-muted-foreground">"{design.text}"</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-base font-semibold">{design.name}</h1>
+          <p className="text-sm text-muted-foreground">"{design.text}"</p>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={isRegenerating}
+          onClick={() => regenerateMutation.mutate()}
+        >
+          <RefreshCw className={isRegenerating ? "animate-spin" : undefined} />
+          {isRegenerating ? "Regenerating…" : "Regenerate"}
+        </Button>
       </div>
+      {regenerateError && (
+        <p className="text-xs text-destructive">{regenerateError}</p>
+      )}
 
       {design.status === "queued" && (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">

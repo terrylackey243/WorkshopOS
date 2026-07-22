@@ -77,6 +77,10 @@ export function DesignsList() {
   const queryClient = useQueryClient();
   const [open, setOpen] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
+  // Name defaults to mirroring Text as you type it, since most labels are
+  // named exactly what they say -- but stops mirroring the moment you
+  // actually type into Name yourself, so it's still freely editable.
+  const [nameEdited, setNameEdited] = React.useState(false);
 
   const designsQuery = useQuery({ queryKey: ["designs"], queryFn: () => designsApi.list() });
   const labelStylesQuery = useQuery({
@@ -94,6 +98,12 @@ export function DesignsList() {
     resolver: zodResolver(designSchema),
     defaultValues: { name: "", text: "", label_style_profile_id: "" },
   });
+  const nameField = form.register("name");
+  const textValue = form.watch("text");
+
+  React.useEffect(() => {
+    if (!nameEdited) form.setValue("name", textValue);
+  }, [textValue, nameEdited, form]);
 
   const createMutation = useMutation({
     mutationFn: (values: DesignFormValues) =>
@@ -110,6 +120,7 @@ export function DesignsList() {
       setOpen(false);
       setFormError(null);
       form.reset({ name: "", text: "", label_style_profile_id: "" });
+      setNameEdited(false);
       navigate(`/label-designer/${design.id}`);
     },
     onError: (error: unknown) => {
@@ -163,7 +174,14 @@ export function DesignsList() {
           >
             <div className="flex flex-col gap-1">
               <Label htmlFor="design-name">Name</Label>
-              <Input id="design-name" {...form.register("name")} />
+              <Input
+                id="design-name"
+                {...nameField}
+                onChange={(e) => {
+                  setNameEdited(true);
+                  nameField.onChange(e);
+                }}
+              />
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="design-text">Text</Label>

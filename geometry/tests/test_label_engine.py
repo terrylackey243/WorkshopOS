@@ -17,6 +17,87 @@ def test_bodies_watertight():
     model=generate_label(params())
     assert model.outline_body.is_watertight and model.text_body.is_watertight
 
+def _outline_component_count(mesh):
+    """Connected-component count over face adjacency via plain union-find --
+    trimesh's own `mesh.split()` needs scipy or networkx, neither of which
+    is a dependency of this package, so this avoids adding one just for a
+    test."""
+    n=len(mesh.faces); parent=list(range(n))
+    def find(x):
+        while parent[x]!=x: parent[x]=parent[parent[x]]; x=parent[x]
+        return x
+    for a,b in mesh.face_adjacency:
+        ra,rb=find(a),find(b)
+        if ra!=rb: parent[ra]=rb
+    return len({find(i) for i in range(n)})
+
+@pytest.mark.parametrize("text",["1/2","13/16","3/8 -- 1/4","Wrenches","1/2 Drive","3/8 Ratchet","Pliers - Needle Nose","o","B"])
+def test_outline_component_count_matches_border_plus_holes(text):
+    """Regression test covering two fixes at once.
+
+    Border bridging: a label's outline is its physical backing plate, so
+    its outer border must come out as one connected piece even when the
+    text buffers into several disjoint islands -- confirmed to happen not
+    just across a space between words, but even within a single "word" or
+    number (e.g. the italic slash in "1/2" sits far enough from both digits
+    to buffer into its own island). Before the fix, each of these produced
+    multiple disconnected border fragments -- physically several floating
+    pieces, not one label.
+
+    Hole filling: the outline body is that one-piece border plus one filled
+    disc per letter/digit counter (the "6", "8", "9", "o", "B", ... hole
+    fix). Each hole-fill disc is its own disconnected piece within this
+    mesh, same as how individual letters are already disconnected pieces
+    within `text_body` -- it doesn't need to touch the border directly
+    because it's fully enclosed by the letter's own stroke (`text_body`) on
+    every side, which locks it in place physically. So the right invariant
+    isn't "exactly one piece" once holes are involved -- it's exactly
+    1 + (hole count), computed fresh per case rather than assumed, since
+    which digits/letters have a hole depends on this engine's exact font.
+    """
+    from workshop_geometry.label_engine import _parts,_text_geometry
+    p=LabelParameters(text=text)
+    text_geom,_=_text_geometry(p)
+    hole_count=sum(len(part.interiors) for part in _parts(text_geom))
+    model=generate_label(p)
+    assert model.outline_body.is_watertight
+    assert _outline_component_count(model.outline_body)==1+hole_count
+
+def test_text_geometry_cuts_letter_counters():
+    """Regression test: letters with an enclosed counter (the hole in "o",
+    "e", "a", ...) must come back with that area as a real shapely interior
+    ring, not filled-in solid area. `TextPath.to_polygons()` returns every
+    closed contour of every glyph as a bare point loop with no hole/winding
+    flag -- naively unioning them (the previous behavior here) treats a
+    counter's contour as more solid fill instead of a subtraction, so "for
+    the" printed both counters ("o", "e") in solid, no hole at all.
+    """
+    from workshop_geometry.label_engine import _parts,_text_geometry
+    text,_=_text_geometry(LabelParameters(text="for the"))
+    assert sum(len(part.interiors) for part in _parts(text))==2
+
+def test_letter_holes_are_filled_with_outline_not_void_or_text():
+    """A letter's counter (the hole in "o", "e", ...) must show up as
+    outline-colored fill -- not the letter's own color (that's still just
+    the original "solid letter" bug) and not an actual void either (a real
+    physical gap -- this label is a flat two-color plate that should tile
+    its whole footprint, not one with punched-through holes in some
+    letters). So the hole center must be inside `outline_body` and outside
+    `text_body`.
+    """
+    pytest.importorskip("rtree")  # trimesh.Trimesh.contains() needs it for ray queries
+    from workshop_geometry.label_engine import _parts,_text_geometry
+    from shapely.geometry import Polygon
+    p=LabelParameters(text="Wrenches")
+    text,_=_text_geometry(p)
+    hole_part=next(part for part in _parts(text) if part.interiors)
+    hole_center=Polygon(hole_part.interiors[0]).centroid
+    model=generate_label(p)
+    z=model.parameters.body_depth_mm/2
+    point=[[hole_center.x,hole_center.y,z]]
+    assert not model.text_body.contains(point)[0]
+    assert model.outline_body.contains(point)[0]
+
 def test_manifest_orientation():
     manifest=generation_manifest(generate_label(params()))
     assert manifest["orientation"]["design_view"]=="face_up"

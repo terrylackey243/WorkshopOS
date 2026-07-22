@@ -1,6 +1,7 @@
 import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
 import { AppShell } from "@/layout/AppShell";
+import { AdminPage } from "@/pages/admin/AdminPage";
 import { Dashboard } from "@/pages/Dashboard";
 import { DrawerDetail } from "@/pages/drawers/DrawerDetail";
 import { InsertDetail } from "@/pages/inserts/InsertDetail";
@@ -66,6 +67,7 @@ const router = createBrowserRouter([
       { path: "profiles/:tab", element: <ProfilesPage /> },
       { path: "roadmap", element: <RoadmapPage /> },
       { path: "settings", element: <SettingsPage /> },
+      { path: "admin", element: <AdminPage /> },
       { path: "*", element: <Navigate to="/shops" replace /> },
     ],
   },

@@ -4,12 +4,14 @@ import {
   Layers,
   Map,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   Warehouse,
   Wrench,
 } from "lucide-react";
 import { NavLink } from "react-router-dom";
 
+import { useAuth } from "@/hooks/useAuth";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -24,6 +26,11 @@ const NAV_ITEMS = [
 ];
 
 export function Sidebar() {
+  const { isSuperadmin } = useAuth();
+  const navItems = isSuperadmin
+    ? [...NAV_ITEMS, { to: "/admin", label: "Admin", icon: ShieldCheck }]
+    : NAV_ITEMS;
+
   return (
     <aside className="flex h-full w-44 shrink-0 flex-col border-r border-border bg-card">
       <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-border px-3">
@@ -33,7 +40,7 @@ export function Sidebar() {
         <span className="text-sm font-semibold tracking-tight">WorkshopOS</span>
       </div>
       <nav className="flex flex-col gap-0.5 p-2">
-        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+        {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}

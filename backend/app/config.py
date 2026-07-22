@@ -33,7 +33,18 @@ class Settings(BaseSettings):
     # Stripe Checkout success_url/cancel_url and billing portal return_url.
     app_public_url: str = "http://localhost:3027"
 
+    # Comma-separated allow-list of emails permitted to use the /admin routes
+    # (manual plan grants, bypassing Stripe/license entirely -- see
+    # routers/admin.py). Empty by default so a fresh deployment has no
+    # superadmin until explicitly configured. Deliberately just an email
+    # list, not a role/table -- exactly one person operates this deployment
+    # today.
+    superadmin_emails: str = ""
+
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
+
+    def superadmin_emails_set(self) -> set[str]:
+        return {e.strip().lower() for e in self.superadmin_emails.split(",") if e.strip()}
 
 
 @lru_cache

@@ -57,6 +57,20 @@ export interface User {
   is_active: boolean;
 }
 
+// Matches backend `AdminOrganizationRead` -- returned only by the
+// superadmin-only `/admin/organizations` routes (see lib/api.ts's
+// `adminApi`), not the tenant-scoped `Organization`/`OrganizationDetail`
+// above.
+export interface AdminOrganization {
+  id: string;
+  name: string;
+  slug: string;
+  plan_key: string;
+  plan_name: string;
+  owner_email: string | null;
+  created_at: string;
+}
+
 export interface Shop {
   id: string;
   organization_id: string;

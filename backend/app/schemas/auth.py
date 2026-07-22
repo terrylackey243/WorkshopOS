@@ -50,3 +50,7 @@ class OrganizationSummary(BaseModel):
 class MeResponse(BaseModel):
     user: UserRead
     organizations: list[OrganizationSummary]
+    # Whether this user's email is in Settings.superadmin_emails -- gates
+    # the /admin UI. Purely a UI convenience; the actual authorization check
+    # is server-side on every /admin route (deps.require_superadmin).
+    is_superadmin: bool

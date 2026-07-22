@@ -186,6 +186,72 @@ async def test_unlinked_design_has_no_qr_file(client: AsyncClient, tmp_path, mon
     assert file_resp.status_code == 404
 
 
+async def test_regenerate_picks_up_label_style_profile_edits(client: AsyncClient, tmp_path, monkeypatch) -> None:
+    """The whole point of /regenerate: parameters_json is a frozen snapshot
+    from create_design, so editing the label style profile afterwards must
+    NOT change an already-generated design until regenerate is explicitly
+    called -- and once it is, the new value must actually be in effect."""
+    data = await register_org(client)
+    headers = auth_headers(data["access_token"])
+    org_id = data["organization_id"]
+
+    _, label_style_id = await _create_magnet_and_label_style(client, org_id, headers)
+
+    create_resp = await client.post(
+        f"/organizations/{org_id}/designs",
+        json={"name": "Wrenches Label", "text": "Wrenches", "label_style_profile_id": label_style_id},
+        headers=headers,
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    design_id = create_resp.json()["id"]
+    original_hash = create_resp.json()["content_hash"]
+    assert create_resp.json()["parameters_json"]["text_height_mm"] == 15.843
+
+    monkeypatch.setattr(worker_tasks.settings, "generated_files_dir", str(tmp_path))
+    await worker_tasks._generate_design(design_id)
+
+    # Edit the profile the design was built from -- this alone must not
+    # touch the design at all.
+    patch_resp = await client.patch(
+        f"/organizations/{org_id}/profiles/label-styles/{label_style_id}",
+        json={"text_height_mm": "20"},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+
+    unchanged = await client.get(f"/organizations/{org_id}/designs/{design_id}", headers=headers)
+    assert unchanged.json()["parameters_json"]["text_height_mm"] == 15.843
+    assert unchanged.json()["content_hash"] == original_hash
+    assert unchanged.json()["status"] == "generated"
+
+    regen_resp = await client.post(
+        f"/organizations/{org_id}/designs/{design_id}/regenerate", headers=headers
+    )
+    assert regen_resp.status_code == 200, regen_resp.text
+    regen_body = regen_resp.json()
+    assert regen_body["status"] == "queued"
+    assert regen_body["parameters_json"]["text_height_mm"] == 20.0
+    assert regen_body["content_hash"] != original_hash
+
+    await worker_tasks._generate_design(design_id)
+    final = await client.get(f"/organizations/{org_id}/designs/{design_id}", headers=headers)
+    assert final.json()["status"] == "generated"
+    assert final.json()["error_message"] is None
+
+
+async def test_regenerate_unknown_design_returns_404(client: AsyncClient) -> None:
+    import uuid
+
+    data = await register_org(client)
+    headers = auth_headers(data["access_token"])
+    org_id = data["organization_id"]
+
+    resp = await client.post(
+        f"/organizations/{org_id}/designs/{uuid.uuid4()}/regenerate", headers=headers
+    )
+    assert resp.status_code == 404
+
+
 async def test_design_create_rejects_unknown_tool_id(client: AsyncClient) -> None:
     data = await register_org(client)
     headers = auth_headers(data["access_token"])

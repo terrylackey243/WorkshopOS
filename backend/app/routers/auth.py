@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..config import get_settings
 from ..db import get_session
 from ..deps import get_current_user
 from ..models import FREE_PLAN_ID, Membership, Organization, Plan, User
@@ -91,4 +92,9 @@ async def me(
         OrganizationSummary(id=org.id, name=org.name, slug=org.slug, plan_key=plan.key, role=membership.role)
         for membership, org, plan in rows.all()
     ]
-    return MeResponse(user=UserRead.model_validate(current_user), organizations=organizations)
+    is_superadmin = current_user.email.lower() in get_settings().superadmin_emails_set()
+    return MeResponse(
+        user=UserRead.model_validate(current_user),
+        organizations=organizations,
+        is_superadmin=is_superadmin,
+    )

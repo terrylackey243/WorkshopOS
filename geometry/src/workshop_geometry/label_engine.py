@@ -6,8 +6,8 @@ import numpy as np, qrcode, trimesh
 from matplotlib.font_manager import FontProperties, findfont
 from matplotlib.textpath import TextPath
 from shapely import affinity
-from shapely.geometry import MultiPolygon, Polygon
-from shapely.ops import unary_union
+from shapely.geometry import LineString, MultiPolygon, Polygon
+from shapely.ops import nearest_points, unary_union
 
 ENGINE_VERSION="0.5.3"
 
@@ -92,16 +92,115 @@ class LabelModel:
     magnet_tools: list[trimesh.Trimesh]
     qr_body: trimesh.Trimesh|None=None
 
+def _fill_glyph_contours(polys):
+    """Combines raw glyph contours (from `TextPath.to_polygons()`) into one
+    shape with counters -- the enclosed holes in letters like "o", "e", "a",
+    "d" -- actually cut out, instead of filled in solid.
+
+    `to_polygons()` returns every closed contour of every glyph as a bare,
+    independent point loop: a letter like "o" comes back as *two* contours
+    (its outer ring and its inner counter), with no flag saying which is
+    which. Wrapping each one in `Polygon(points)` and `unary_union`-ing them
+    (the previous approach here) treats every contour as solid fill, so the
+    counter adds area instead of subtracting it -- every hole in every
+    letter silently filled in.
+
+    The fix is polygon-nesting depth, not winding order: a contour that is
+    itself fully enclosed by an odd number of other contours is a hole
+    (it's one level deeper than the solid ring it's cutting into); an even
+    count (usually zero) is solid. This is correct for arbitrarily nested
+    glyphs (a hole could itself contain an island, in principle) and, just
+    as importantly, for *adjacent* letters that happen to touch or overlap
+    (common in this engine's default bold-italic font) -- neither contains
+    the other, so both stay at depth 0 and simply union together, unlike a
+    global even-odd XOR of all contours, which would misread that overlap
+    as a hole between two unrelated letters.
+
+    Nesting is tested via whole-polygon containment (`other.contains(poly)`),
+    not a representative point of `poly` tested against `other` -- a raw
+    outer glyph contour (no hole cut into it yet) renders as a solid disc,
+    so a representative point near its centroid can itself fall inside the
+    smaller hole-designate contour it encloses. That made both contours look
+    like they contained each other (confirmed via the single letter "o":
+    both its 2 raw contours came back at depth 1, canceling out to an empty
+    shape) -- containment of the full polygon, not a sampled point, is
+    unambiguous.
+    """
+    solids,holes=[],[]
+    for i,poly in enumerate(polys):
+        depth=sum(1 for j,other in enumerate(polys) if j!=i and other.contains(poly))
+        (holes if depth%2 else solids).append(poly)
+    g=unary_union(solids)
+    return g.difference(unary_union(holes)) if holes else g
+
+def _hole_regions(text):
+    """The hole/counter regions already cut into `text` by
+    `_fill_glyph_contours`, re-extracted as their own polygons so the
+    outline ring can claim them (see `generate_label`).
+
+    A label is a flat two-color plate, not a plate with punched-through
+    holes: `outline` and `text_body` are extruded to the exact same
+    `body_depth_mm` z-range and, together, are meant to tile the label's
+    entire footprint -- there's no third "nothing here" region anywhere
+    else on the label, so a letter's counter shouldn't be one either. Left
+    out of both bodies (an earlier version of this function did exactly
+    that, to fix a *different* bug -- see git history), a counter is a
+    genuine void: an actual gap you can see or push a pin through, not a
+    background-colored letter counter like the reference design calls for.
+    Adding these regions into `ring` makes that area outline-colored fill
+    instead, matching every other non-letter region of the label.
+    """
+    parts=text.geoms if hasattr(text,'geoms') else [text]
+    holes=[Polygon(interior) for part in parts for interior in part.interiors]
+    return unary_union(holes) if holes else None
+
 def _text_geometry(p):
     fp=str(findfont(FontProperties(family=p.font_family,weight=p.font_weight,style=p.font_style),fallback_to_default=True))
     path=TextPath((0,0),p.text,size=1.0,prop=FontProperties(fname=fp))
     polys=[Polygon(points) for points in path.to_polygons() if len(points)>=3]
     polys=[x for x in polys if x.is_valid and x.area>0]
-    g=unary_union(polys); minx,miny,maxx,maxy=g.bounds
+    g=_fill_glyph_contours(polys); minx,miny,maxx,maxy=g.bounds
     s=p.text_height_mm/(maxy-miny)
     g=affinity.scale(g,xfact=s*p.horizontal_scale,yfact=s,origin=(0,0))
     minx,miny,_,_=g.bounds
     return affinity.translate(g,xoff=-minx,yoff=-miny),fp
+
+def _outline_bridges(buffered,width_mm):
+    """2D footprints (simple capsules, no holes) connecting every
+    disconnected piece of `buffered` -- the dilated-but-not-yet-holed basis
+    for the outline ring -- to its neighbour.
+
+    A label's outline is its physical backing plate, so it must always come
+    out as a single piece -- but buffering per-glyph text can leave it in
+    several: not just across a space between words, but even within one
+    word, whenever a glyph's own silhouette doesn't reach its neighbour at
+    this offset (confirmed via `_text_geometry("1/2 Drive")`: the italic
+    slash sits far enough from both digits that "1/2" alone buffers into two
+    pieces, on top of the word gap before "Drive" -- three disconnected
+    outline islands from one two-word label, not the two you'd guess).
+
+    Deliberately returned as separate 2D shapes to be extruded and
+    3D-boolean-unioned onto the outline body by the caller, NOT merged into
+    `ring` before extrusion: `extrude_polygon`'s earcut triangulation of one
+    complex polygon combining the letter-shaped holes with a thin connecting
+    neck was confirmed (empirically, on this exact label) to yield a
+    non-watertight mesh -- the same class of triangulation limitation
+    already documented on `_qr_body` above. Unioning simple, hole-free
+    primitives via `manifold3d` CSG sidesteps it entirely, the same way
+    magnet supports are welded onto the outline below.
+
+    Bridges each adjacent piece (sorted left to right by its leftmost x) to
+    the next through their two closest points -- a round cap (not the
+    mitred joins used elsewhere in this file) is what guarantees the
+    resulting capsule actually overlaps both pieces' interiors rather than
+    just grazing their boundary at a single point, which the boolean union
+    could then leave unwelded. Chaining every adjacent pair this way always
+    yields one connected result regardless of how many pieces there are or
+    how the gaps are arranged.
+    """
+    if isinstance(buffered,Polygon): return []
+    parts=sorted((g for g in buffered.geoms if isinstance(g,Polygon)),key=lambda g:g.bounds[0])
+    return [LineString([*nearest_points(a,b)]).buffer(width_mm,cap_style=1) for a,b in zip(parts,parts[1:])]
 
 def _qr_body(url,body_depth_mm):
     """A solid base plate (the full QR_SIZE_MM square) with each dark QR
@@ -211,8 +310,14 @@ def calculate_metrics(p):
 
 def generate_label(p):
     metrics=calculate_metrics(p); text,_=_text_geometry(p)
-    ring=text.buffer(p.outline_offset_mm,join_style=2,quad_segs=16).difference(text)
-    outline=_extrude(ring,p.body_depth_mm); outline.metadata["body_role"]="text_outline"
+    buffered=text.buffer(p.outline_offset_mm,join_style=2,quad_segs=16)
+    ring=buffered.difference(text)
+    holes=_hole_regions(text)
+    if holes is not None: ring=ring.union(holes)
+    outline=_extrude(ring,p.body_depth_mm)
+    bridges=[_extrude(b,p.body_depth_mm) for b in _outline_bridges(buffered,p.outline_offset_mm)]
+    if bridges: outline=_union([outline,*bridges],"text_outline")
+    outline.metadata["body_role"]="text_outline"
     text_body=_extrude(text,p.body_depth_mm); text_body.metadata["body_role"]="face_up_text"
     # Independent third body -- not positioned relative to the text/outline,
     # not combined with them, and doesn't affect calculate_metrics()'s width

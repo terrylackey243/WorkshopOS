@@ -136,6 +136,82 @@ async def get_design(
     return await _get_design(session, organization_id, design_id)
 
 
+@router.post("/{design_id}/regenerate", response_model=DesignRead)
+async def regenerate_design(
+    organization_id: uuid.UUID,
+    design_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> Design:
+    """Re-derives `parameters_json` from the design's linked profiles' and
+    tool's *current* field values (not the values at creation time) and
+    re-enqueues generation. This is the only way an already-created design
+    picks up an edit to its label style / magnet profile -- `parameters_json`
+    is otherwise a frozen snapshot from `create_design`, by design (it's
+    what `content_hash` is a checksum of), so profile edits never silently
+    change what an existing design generates until this is called.
+
+    Re-fetches by the design's own `label_style_profile_id`/`magnet_profile_id`
+    FKs rather than re-running `create_design`'s default-magnet-profile
+    fallback: those FKs already hold the resolved profile this design uses
+    (including a real magnet profile the label style's default resolved to
+    at creation), so this always reproduces the *same* profile selection
+    with fresh values, never a different one.
+    """
+    design = await _get_design(session, organization_id, design_id)
+
+    if design.label_style_profile_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This design's label style profile no longer exists.",
+        )
+    label_style = await session.scalar(
+        select(LabelStyleProfile).where(
+            LabelStyleProfile.id == design.label_style_profile_id,
+            LabelStyleProfile.organization_id == organization_id,
+        )
+    )
+    if label_style is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Label style profile not found.")
+
+    magnet: MagnetProfile | None = None
+    if design.magnet_profile_id is not None:
+        magnet = await session.scalar(
+            select(MagnetProfile).where(
+                MagnetProfile.id == design.magnet_profile_id,
+                MagnetProfile.organization_id == organization_id,
+            )
+        )
+        if magnet is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Magnet profile not found.")
+
+    qr_url: str | None = None
+    if design.tool_id is not None:
+        tool = await session.scalar(
+            select(Tool).where(Tool.id == design.tool_id, Tool.organization_id == organization_id)
+        )
+        if tool is not None:
+            qr_url = f"{settings.app_public_url}/tools/{tool.id}"
+
+    params_dict = build_label_parameters(label_style, magnet, design.text, qr_url=qr_url)
+    try:
+        engine_version, content_hash = compute_manifest_fields(params_dict)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    design.parameters_json = params_dict
+    design.engine_version = engine_version
+    design.content_hash = content_hash
+    design.status = "queued"
+    design.error_message = None
+    await session.commit()
+    await session.refresh(design)
+
+    generate_design.send(str(design.id))
+
+    return design
+
+
 @router.delete("/{design_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_design(
     organization_id: uuid.UUID,

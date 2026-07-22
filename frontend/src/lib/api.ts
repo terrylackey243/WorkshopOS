@@ -2,6 +2,7 @@ import axios, { type AxiosInstance } from "axios";
 import { getActiveOrgId, getToken, handleUnauthorized } from "@/lib/auth";
 import { handlePlanLimitExceeded } from "@/lib/billing";
 import type {
+  AdminOrganization,
   Dashboard,
   Design,
   DeploymentConfig,
@@ -101,6 +102,7 @@ export interface RegisterResponse extends TokenResponse {
 export interface MeResponse {
   user: User;
   organizations: OrganizationSummary[];
+  is_superadmin: boolean;
 }
 
 export const authApi = {
@@ -119,6 +121,27 @@ export const organizationsApi = {
   list: () => http.get<Organization[]>("/organizations").then((r) => r.data),
   get: (id: string) =>
     http.get<OrganizationDetail>(`/organizations/${id}`).then((r) => r.data),
+};
+
+// ---------------------------------------------------------------------------
+// Admin (superadmin-only -- manual plan grants, bypassing Stripe/license
+// entirely). Not org-scoped: acts across every organization, gated
+// server-side on the caller's email (see deps.require_superadmin).
+// ---------------------------------------------------------------------------
+
+export const adminApi = {
+  listOrganizations: (search?: string) =>
+    http
+      .get<AdminOrganization[]>("/admin/organizations", {
+        params: search ? { search } : undefined,
+      })
+      .then((r) => r.data),
+  setPlan: (organizationId: string, planKey: string) =>
+    http
+      .post<AdminOrganization>(`/admin/organizations/${organizationId}/plan`, {
+        plan_key: planKey,
+      })
+      .then((r) => r.data),
 };
 
 // ---------------------------------------------------------------------------
@@ -301,9 +324,12 @@ export const toolboxesApi = {
 };
 
 // ---------------------------------------------------------------------------
-// Designs (Label Designer): flat org-scoped resource like shops/tools, but
-// immutable once created -- no `update`. `magnet_profile_id` omitted falls
-// back server-side to the label style's default.
+// Designs (Label Designer): flat org-scoped resource like shops/tools.
+// `parameters_json` is a frozen snapshot from creation -- editing the label
+// style/magnet profile a design uses doesn't retroactively change it, so
+// `regenerate` re-derives it from the profiles' *current* values and
+// re-enqueues generation. `magnet_profile_id` omitted on create falls back
+// server-side to the label style's default.
 // ---------------------------------------------------------------------------
 
 export interface DesignCreatePayload {
@@ -322,6 +348,8 @@ export const designsApi = {
   get: (id: string) => http.get<Design>(orgPath(`/designs/${id}`)).then((r) => r.data),
   create: (payload: DesignCreatePayload) =>
     http.post<Design>(orgPath("/designs"), payload).then((r) => r.data),
+  regenerate: (id: string) =>
+    http.post<Design>(orgPath(`/designs/${id}/regenerate`)).then((r) => r.data),
   remove: (id: string) =>
     http.delete<void>(orgPath(`/designs/${id}`)).then(() => undefined),
 };

@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .config import get_settings
 from .db import get_session
 from .models import Membership, Organization, User
 from .security import decode_access_token
@@ -58,6 +59,17 @@ async def get_current_membership(
             detail="You are not a member of this organization.",
         )
     return membership
+
+
+async def require_superadmin(current_user: User = Depends(get_current_user)) -> User:
+    """Platform-operator gate for `routers/admin.py`, entirely independent of
+    both `deployment_mode` and the org-membership model -- it checks the
+    caller's email against `Settings.superadmin_emails` and nothing else.
+    Deliberately separate from `get_current_membership`: admin routes act
+    across every organization, not one the caller belongs to."""
+    if current_user.email.lower() not in get_settings().superadmin_emails_set():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized.")
+    return current_user
 
 
 async def get_current_organization(

@@ -20,6 +20,7 @@ import type { OrganizationSummary, User } from "@/lib/types";
 interface AuthContextValue {
   user: User | undefined;
   organizations: OrganizationSummary[];
+  isSuperadmin: boolean;
   isLoading: boolean;
   isAuthed: boolean;
   activeOrgId: string | null;
@@ -95,6 +96,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value: AuthContextValue = {
     user: meQuery.data?.user,
     organizations: meQuery.data?.organizations ?? [],
+    isSuperadmin: meQuery.data?.is_superadmin ?? false,
     isLoading: authed && meQuery.isLoading,
     isAuthed: authed,
     activeOrgId,
