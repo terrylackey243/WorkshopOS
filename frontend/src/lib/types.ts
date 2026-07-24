@@ -111,6 +111,8 @@ export interface Drawer {
   name: string | null;
   position_label: string | null;
   notes: string | null;
+  row: number | null;
+  order_in_row: number | null;
   created_at: string;
   updated_at: string;
 }

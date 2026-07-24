@@ -496,6 +496,18 @@ export const drawersApi = {
         orgPath(`/shops/${shopId}/toolboxes/${toolboxId}/drawers/${drawerId}`),
       )
       .then(() => undefined),
+  moveLeft: (shopId: string, toolboxId: string, drawerId: string) =>
+    http
+      .post<Drawer>(
+        orgPath(`/shops/${shopId}/toolboxes/${toolboxId}/drawers/${drawerId}/move-left`),
+      )
+      .then((r) => r.data),
+  moveRight: (shopId: string, toolboxId: string, drawerId: string) =>
+    http
+      .post<Drawer>(
+        orgPath(`/shops/${shopId}/toolboxes/${toolboxId}/drawers/${drawerId}/move-right`),
+      )
+      .then((r) => r.data),
 };
 
 // ---------------------------------------------------------------------------

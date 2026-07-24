@@ -54,6 +54,7 @@ const drawerSchema = z.object({
   name: z.string().optional(),
   position_label: z.string().optional(),
   notes: z.string().optional(),
+  row: z.string().optional(),
 });
 type DrawerFormValues = z.infer<typeof drawerSchema>;
 
@@ -195,6 +196,7 @@ export function DrawerDetail() {
         name: drawerQuery.data.name ?? "",
         position_label: drawerQuery.data.position_label ?? "",
         notes: drawerQuery.data.notes ?? "",
+        row: drawerQuery.data.row?.toString() ?? "",
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -202,7 +204,10 @@ export function DrawerDetail() {
 
   const updateMutation = useMutation({
     mutationFn: (values: DrawerFormValues) =>
-      drawersApi.update(shopId as string, toolboxId as string, drawerId as string, values),
+      drawersApi.update(shopId as string, toolboxId as string, drawerId as string, {
+        ...values,
+        row: values.row ? Number(values.row) : null,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["drawers"] });
     },
@@ -278,6 +283,10 @@ export function DrawerDetail() {
           <div className="flex flex-col gap-1">
             <Label htmlFor="position_label">Position label</Label>
             <Input id="position_label" {...form.register("position_label")} />
+          </div>
+          <div className="flex flex-col gap-1">
+            <Label htmlFor="row">Row</Label>
+            <Input id="row" type="number" placeholder="1" {...form.register("row")} />
           </div>
           <div className="col-span-2 flex flex-col gap-1">
             <Label htmlFor="notes">Notes</Label>

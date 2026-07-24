@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -46,3 +46,5 @@ class Drawer(UUIDPk, Timestamped, Base):
     name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     position_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    row: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    order_in_row: Mapped[int | None] = mapped_column(Integer, nullable=True)

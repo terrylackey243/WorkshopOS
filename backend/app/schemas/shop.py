@@ -52,6 +52,7 @@ class DrawerCreate(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     position_label: str | None = Field(default=None, max_length=100)
     notes: str | None = Field(default=None, max_length=2000)
+    row: int | None = Field(default=None)
 
 
 class DrawerUpdate(BaseModel):
@@ -59,6 +60,7 @@ class DrawerUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=200)
     position_label: str | None = Field(default=None, max_length=100)
     notes: str | None = Field(default=None, max_length=2000)
+    row: int | None = Field(default=None)
 
 
 class DrawerRead(ORMModel):
@@ -68,3 +70,5 @@ class DrawerRead(ORMModel):
     name: str | None
     position_label: str | None
     notes: str | None
+    row: int | None
+    order_in_row: int | None
