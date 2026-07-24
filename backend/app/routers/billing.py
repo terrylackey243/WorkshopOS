@@ -41,6 +41,7 @@ def _organization_detail(organization: Organization, plan: Plan) -> Organization
         plan=PlanRead.model_validate(plan),
         license_tier=organization.license_tier,
         license_activated_at=organization.license_activated_at,
+        anthropic_api_key_configured=organization.anthropic_api_key_ciphertext is not None,
     )
 
 

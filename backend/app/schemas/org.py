@@ -30,6 +30,9 @@ class OrganizationDetailRead(OrganizationRead):
     # from `plan.key`, which is also the Stripe-sync field on SaaS orgs.
     license_tier: str | None = None
     license_activated_at: datetime | None = None
+    # Whether this org has an Anthropic API key configured for AI Import --
+    # never the key itself (plaintext or ciphertext). See app/routers/ai_import.py.
+    anthropic_api_key_configured: bool = False
 
 
 class MembershipRead(ORMModel):

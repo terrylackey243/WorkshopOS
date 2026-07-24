@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { z } from "zod";
 
 import {
   Select,
@@ -19,6 +18,18 @@ import {
 } from "@/lib/api";
 import { FieldRow, NumberField, TextField } from "@/pages/profiles/fields";
 import { ProfileCrudTab } from "@/pages/profiles/ProfileCrudTab";
+import {
+  drawerProfileDefaultValues,
+  drawerProfileSchema,
+  labelStyleDefaultValues,
+  labelStyleSchema,
+  magnetDefaultValues,
+  magnetSchema,
+  materialDefaultValues,
+  materialSchema,
+  printerDefaultValues,
+  printerSchema,
+} from "@/pages/profiles/schemas";
 
 const TABS = [
   { slug: "printers", label: "Printers" },
@@ -32,18 +43,6 @@ const TABS = [
 // Printers
 // ---------------------------------------------------------------------------
 
-const printerSchema = z.object({
-  name: z.string().min(1),
-  manufacturer: z.string().optional(),
-  model: z.string().optional(),
-  build_width_mm: z.coerce.number().positive(),
-  build_depth_mm: z.coerce.number().positive(),
-  build_height_mm: z.coerce.number().positive(),
-  nozzle_diameter_mm: z.coerce.number().positive().default(0.4),
-  usable_margin_mm: z.coerce.number().min(0).default(2.0),
-});
-type PrinterFormValues = z.infer<typeof printerSchema>;
-
 function PrintersTab() {
   return (
     <ProfileCrudTab
@@ -51,18 +50,7 @@ function PrintersTab() {
       queryKey="profiles-printers"
       api={printerProfilesApi}
       schema={printerSchema}
-      defaultValues={
-        {
-          name: "",
-          manufacturer: "",
-          model: "",
-          build_width_mm: 220,
-          build_depth_mm: 220,
-          build_height_mm: 250,
-          nozzle_diameter_mm: 0.4,
-          usable_margin_mm: 2.0,
-        } as PrinterFormValues
-      }
+      defaultValues={printerDefaultValues}
       columns={[
         { key: "build", label: "Build volume (mm)", format: (r) => `${r.build_width_mm}×${r.build_depth_mm}×${r.build_height_mm}`, mono: true },
         { key: "nozzle_diameter_mm", label: "Nozzle Ø (mm)", mono: true },
@@ -93,16 +81,6 @@ function PrintersTab() {
 // Magnets
 // ---------------------------------------------------------------------------
 
-const magnetSchema = z.object({
-  name: z.string().min(1),
-  diameter_mm: z.coerce.number().positive(),
-  thickness_mm: z.coerce.number().positive(),
-  diameter_clearance_mm: z.coerce.number().min(0).default(0.2),
-  depth_clearance_mm: z.coerce.number().min(0).default(0.2),
-  fit_type: z.string().default("glue"),
-});
-type MagnetFormValues = z.infer<typeof magnetSchema>;
-
 function MagnetsTab() {
   return (
     <ProfileCrudTab
@@ -110,16 +88,7 @@ function MagnetsTab() {
       queryKey="profiles-magnets"
       api={magnetProfilesApi}
       schema={magnetSchema}
-      defaultValues={
-        {
-          name: "",
-          diameter_mm: 6,
-          thickness_mm: 2,
-          diameter_clearance_mm: 0.2,
-          depth_clearance_mm: 0.2,
-          fit_type: "glue",
-        } as MagnetFormValues
-      }
+      defaultValues={magnetDefaultValues}
       columns={[
         { key: "size", label: "Size (mm)", format: (r) => `⌀${r.diameter_mm} × ${r.thickness_mm}`, mono: true },
         { key: "fit_type", label: "Fit" },
@@ -146,14 +115,6 @@ function MagnetsTab() {
 // Materials
 // ---------------------------------------------------------------------------
 
-const materialSchema = z.object({
-  name: z.string().min(1),
-  material_type: z.string().min(1),
-  xy_compensation_mm: z.coerce.number().default(0),
-  notes: z.string().optional(),
-});
-type MaterialFormValues = z.infer<typeof materialSchema>;
-
 function MaterialsTab() {
   return (
     <ProfileCrudTab
@@ -161,9 +122,7 @@ function MaterialsTab() {
       queryKey="profiles-materials"
       api={materialProfilesApi}
       schema={materialSchema}
-      defaultValues={
-        { name: "", material_type: "PLA", xy_compensation_mm: 0, notes: "" } as MaterialFormValues
-      }
+      defaultValues={materialDefaultValues}
       columns={[
         { key: "material_type", label: "Type" },
         { key: "xy_compensation_mm", label: "XY comp. (mm)", mono: true },
@@ -184,34 +143,6 @@ function MaterialsTab() {
 // Label styles
 // ---------------------------------------------------------------------------
 
-const labelStyleSchema = z.object({
-  name: z.string().min(1),
-  text_height_mm: z.coerce.number().positive().default(15.843),
-  body_depth_mm: z.coerce.number().positive().default(4.55),
-  outline_offset_mm: z.coerce.number().min(0).default(1.25),
-  font_family: z.string().default("DejaVu Sans"),
-  font_weight: z.string().default("bold"),
-  font_style: z.string().default("italic"),
-  horizontal_scale: z.coerce.number().positive().default(1.0),
-  minimum_width_mm: z.coerce.number().min(0).default(24.0),
-  // An empty `type="number"` input's `valueAsNumber` is `NaN`, not
-  // `undefined` -- z.coerce.number().optional() alone rejects `NaN` and
-  // fails validation silently (ProfileCrudTab's create mutation has no
-  // onError handler), so the dialog just sits there with no visible error
-  // the moment this genuinely-optional field is left blank. Preprocess
-  // NaN/empty-string to undefined before the number coercion runs.
-  fixed_width_mm: z.preprocess(
-    (v) => (v === "" || (typeof v === "number" && Number.isNaN(v)) ? undefined : v),
-    z.coerce.number().positive().optional(),
-  ),
-  magnet_count: z.coerce.number().int().min(0).default(2),
-  magnet_edge_offset_mm: z.coerce.number().min(0).default(8.0),
-  magnet_minimum_bridge_mm: z.coerce.number().min(0).default(0.6),
-  magnet_support_extra_mm: z.coerce.number().min(0).default(0.0),
-  default_magnet_profile_id: z.string().optional(),
-});
-type LabelStyleFormValues = z.infer<typeof labelStyleSchema>;
-
 function LabelStylesTab() {
   const magnetProfilesQuery = useQuery({
     queryKey: ["profiles-magnets"],
@@ -224,23 +155,7 @@ function LabelStylesTab() {
       queryKey="profiles-label-styles"
       api={labelStyleProfilesApi}
       schema={labelStyleSchema}
-      defaultValues={
-        {
-          name: "",
-          text_height_mm: 15.843,
-          body_depth_mm: 4.55,
-          outline_offset_mm: 1.25,
-          font_family: "DejaVu Sans",
-          font_weight: "bold",
-          font_style: "italic",
-          horizontal_scale: 1.0,
-          minimum_width_mm: 24.0,
-          magnet_count: 2,
-          magnet_edge_offset_mm: 8.0,
-          magnet_minimum_bridge_mm: 0.6,
-          magnet_support_extra_mm: 0.0,
-        } as LabelStyleFormValues
-      }
+      defaultValues={labelStyleDefaultValues}
       columns={[
         { key: "font_family", label: "Font", format: (r) => `${r.font_family} (${r.font_weight}/${r.font_style})` },
         { key: "text_height_mm", label: "Text height (mm)", mono: true },
@@ -304,15 +219,6 @@ function LabelStylesTab() {
 // Drawer profiles
 // ---------------------------------------------------------------------------
 
-const drawerProfileSchema = z.object({
-  name: z.string().min(1),
-  inside_width_mm: z.coerce.number().positive(),
-  inside_depth_mm: z.coerce.number().positive(),
-  inside_height_mm: z.coerce.number().positive(),
-  grid_unit_mm: z.coerce.number().positive().default(42),
-});
-type DrawerProfileFormValues = z.infer<typeof drawerProfileSchema>;
-
 function DrawerProfilesTab() {
   return (
     <ProfileCrudTab
@@ -320,15 +226,7 @@ function DrawerProfilesTab() {
       queryKey="profiles-drawer-profiles"
       api={drawerProfilesApi}
       schema={drawerProfileSchema}
-      defaultValues={
-        {
-          name: "",
-          inside_width_mm: 350,
-          inside_depth_mm: 450,
-          inside_height_mm: 50,
-          grid_unit_mm: 42,
-        } as DrawerProfileFormValues
-      }
+      defaultValues={drawerProfileDefaultValues}
       columns={[
         { key: "inside", label: "Inside (mm)", format: (r) => `${r.inside_width_mm}×${r.inside_depth_mm}×${r.inside_height_mm}`, mono: true },
         { key: "grid_unit_mm", label: "Grid unit (mm)", mono: true },

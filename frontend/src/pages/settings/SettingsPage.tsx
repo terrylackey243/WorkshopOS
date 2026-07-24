@@ -7,6 +7,7 @@ import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -19,12 +20,17 @@ import {
 } from "@/components/ui/table";
 import { useAuth } from "@/hooks/useAuth";
 import { useDeploymentMode } from "@/hooks/useDeploymentMode";
-import { billingApi, exportOrganization, organizationsApi, triggerBlobDownload } from "@/lib/api";
+import { aiImportApi, billingApi, exportOrganization, organizationsApi, triggerBlobDownload } from "@/lib/api";
 
 const licenseSchema = z.object({
   license_key: z.string().min(1, "Required"),
 });
 type LicenseFormValues = z.infer<typeof licenseSchema>;
+
+const aiSettingsSchema = z.object({
+  anthropic_api_key: z.string().min(1, "Required"),
+});
+type AiSettingsFormValues = z.infer<typeof aiSettingsSchema>;
 
 export function SettingsPage() {
   const { user, organizations, activeOrgId } = useAuth();
@@ -74,6 +80,37 @@ export function SettingsPage() {
       reset();
     },
   });
+
+  const {
+    register: registerAiSettings,
+    handleSubmit: handleAiSettingsSubmit,
+    reset: resetAiSettings,
+    formState: { errors: aiSettingsErrors },
+  } = useForm<AiSettingsFormValues>({
+    resolver: zodResolver(aiSettingsSchema),
+  });
+
+  const setApiKeyMutation = useMutation({
+    mutationFn: (values: AiSettingsFormValues) => aiImportApi.setApiKey(values.anthropic_api_key),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: orgQueryKey });
+      resetAiSettings();
+    },
+  });
+
+  const clearApiKeyMutation = useMutation({
+    mutationFn: () => aiImportApi.clearApiKey(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: orgQueryKey });
+    },
+  });
+
+  const aiSettingsError = setApiKeyMutation.isError
+    ? axios.isAxiosError(setApiKeyMutation.error) &&
+      typeof setApiKeyMutation.error.response?.data?.detail === "string"
+      ? setApiKeyMutation.error.response.data.detail
+      : "Failed to save API key."
+    : null;
 
   const checkoutMutation = useMutation({
     mutationFn: (tier: "pro" | "enterprise") => billingApi.checkout(tier),
@@ -227,6 +264,60 @@ export function SettingsPage() {
               )}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card className="max-w-xl" id="anthropic-api-key">
+        <CardHeader>
+          <CardTitle>AI Import</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 text-sm">
+          <p className="text-muted-foreground">
+            Bring your own Anthropic API key to enable AI Import (turning a free-text description
+            into a batch of profile presets, reviewable before anything is created). WorkshopOS
+            never sees or bills for your usage -- get a key from{" "}
+            <span className="font-mono text-xs">console.anthropic.com</span>.
+          </p>
+          <div className="flex items-center justify-between">
+            <span className="text-muted-foreground">Status</span>
+            <Badge variant={orgQuery.data?.anthropic_api_key_configured ? "default" : "secondary"}>
+              {orgQuery.data?.anthropic_api_key_configured ? "Configured" : "Not configured"}
+            </Badge>
+          </div>
+          <form
+            onSubmit={handleAiSettingsSubmit((v) => setApiKeyMutation.mutate(v))}
+            className="mt-1 flex flex-col gap-2 border-t border-border pt-3"
+          >
+            <Label htmlFor="anthropic_api_key">Anthropic API key</Label>
+            <Input
+              id="anthropic_api_key"
+              type="password"
+              placeholder="sk-ant-..."
+              className="font-mono text-xs"
+              {...registerAiSettings("anthropic_api_key")}
+            />
+            {aiSettingsErrors.anthropic_api_key && (
+              <p className="text-xs text-destructive">{aiSettingsErrors.anthropic_api_key.message}</p>
+            )}
+            {aiSettingsError && <p className="text-xs text-destructive">{aiSettingsError}</p>}
+            <div className="flex gap-2">
+              <Button type="submit" size="sm" className="w-fit" disabled={setApiKeyMutation.isPending}>
+                {setApiKeyMutation.isPending ? "Saving…" : "Save key"}
+              </Button>
+              {orgQuery.data?.anthropic_api_key_configured && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="w-fit"
+                  disabled={clearApiKeyMutation.isPending}
+                  onClick={() => clearApiKeyMutation.mutate()}
+                >
+                  {clearApiKeyMutation.isPending ? "Removing…" : "Remove key"}
+                </Button>
+              )}
+            </div>
+          </form>
         </CardContent>
       </Card>
 

@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # Stripe Checkout success_url/cancel_url and billing portal return_url.
     app_public_url: str = "http://localhost:3027"
 
+    # Fernet key (base64, 32 bytes) used to encrypt org-supplied secrets
+    # (currently just the AI Import Anthropic API key) at rest. Only needed
+    # once any org sets one -- see app/services/crypto.py.
+    settings_encryption_key: str | None = None
+
     # Comma-separated allow-list of emails permitted to use the /admin routes
     # (manual plan grants, bypassing Stripe/license entirely -- see
     # routers/admin.py). Empty by default so a fresh deployment has no

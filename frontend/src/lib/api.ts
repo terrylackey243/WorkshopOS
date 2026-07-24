@@ -3,6 +3,8 @@ import { getActiveOrgId, getToken, handleUnauthorized } from "@/lib/auth";
 import { handlePlanLimitExceeded } from "@/lib/billing";
 import type {
   AdminOrganization,
+  AiExtractedRow,
+  AiExtractPayload,
   Dashboard,
   Design,
   DeploymentConfig,
@@ -169,6 +171,25 @@ export const billingApi = {
       .then((r) => r.data),
   portal: () =>
     http.post<PortalResponse>(orgPath("/billing/portal")).then((r) => r.data),
+};
+
+// ---------------------------------------------------------------------------
+// AI Import: BYOK Anthropic-key storage + prompt-to-preview extraction.
+// Org-scoped via `orgPath()`, same as `billingApi` above. Not a CRUD
+// resource, so this is a bespoke object rather than `makeCrud`/`makeProfileCrud`.
+// ---------------------------------------------------------------------------
+
+export const aiImportApi = {
+  setApiKey: (apiKey: string) =>
+    http
+      .post<OrganizationDetail>(orgPath("/ai-settings"), { anthropic_api_key: apiKey })
+      .then((r) => r.data),
+  clearApiKey: () =>
+    http.delete<OrganizationDetail>(orgPath("/ai-settings")).then((r) => r.data),
+  extract: (payload: AiExtractPayload) =>
+    http
+      .post<{ rows: AiExtractedRow[] }>(orgPath("/ai-import/extract"), payload)
+      .then((r) => r.data.rows),
 };
 
 // ---------------------------------------------------------------------------

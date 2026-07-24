@@ -31,6 +31,29 @@ export interface OrganizationDetail extends Organization {
   // Stripe instead of a license key.
   license_tier: string | null;
   license_activated_at: string | null;
+  // Whether this org has an Anthropic API key configured for AI Import --
+  // never the key itself. See lib/api.ts's `aiImportApi`.
+  anthropic_api_key_configured: boolean;
+}
+
+// The 5 existing profile types AI Import can generate rows for -- matches
+// backend `ProfileTypeKey` (app/schemas/ai_import.py).
+export type AiProfileTypeKey = "printer" | "magnet" | "material" | "drawer_profile" | "label_style";
+
+export interface AiExtractPayload {
+  profile_type: AiProfileTypeKey;
+  unit: "in" | "mm";
+  prompt: string;
+}
+
+// Matches backend `AiExtractedRow` -- `fields` is already unit-converted and
+// keyed by the real Create-schema field names (e.g. "inside_width_mm"), so
+// it can be spread straight into the matching `*ProfilesApi.create()` call
+// once the user confirms the row.
+export interface AiExtractedRow {
+  name: string | null;
+  fields: Record<string, number | string | null>;
+  name_conflict: boolean;
 }
 
 // `GET /config` -- unauthenticated, top-level (not org-scoped), read before

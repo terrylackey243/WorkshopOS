@@ -54,6 +54,10 @@ class Organization(UUIDPk, Timestamped, Base):
     # org-scoped URL).
     stripe_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
     stripe_subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # AI Import (see app/routers/ai_import.py): the org's own Anthropic API
+    # key (BYOK -- WorkshopOS never pays for or proxies these calls),
+    # Fernet-encrypted via app/services/crypto.py. Never the plaintext key.
+    anthropic_api_key_ciphertext: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class User(UUIDPk, Timestamped, Base):

@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom"
 
 import { AppShell } from "@/layout/AppShell";
 import { AdminPage } from "@/pages/admin/AdminPage";
+import { AiImportPage } from "@/pages/ai-import/AiImportPage";
 import { Dashboard } from "@/pages/Dashboard";
 import { DrawerDetail } from "@/pages/drawers/DrawerDetail";
 import { InsertDetail } from "@/pages/inserts/InsertDetail";
@@ -66,6 +67,7 @@ const router = createBrowserRouter([
       { path: "profiles", element: <ProfilesPage /> },
       { path: "profiles/:tab", element: <ProfilesPage /> },
       { path: "roadmap", element: <RoadmapPage /> },
+      { path: "ai-import", element: <AiImportPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "admin", element: <AdminPage /> },
       { path: "*", element: <Navigate to="/shops" replace /> },

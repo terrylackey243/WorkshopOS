@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .routers.admin import router as admin_router
+from .routers.ai_import import router as ai_import_router
 from .routers.auth import router as auth_router
 from .routers.billing import router as billing_router
 from .routers.dashboard import router as dashboard_router
@@ -50,6 +51,7 @@ app.include_router(dashboard_router)
 app.include_router(export_router)
 app.include_router(failed_jobs_router)
 app.include_router(admin_router)
+app.include_router(ai_import_router)
 
 
 @app.get("/health")
