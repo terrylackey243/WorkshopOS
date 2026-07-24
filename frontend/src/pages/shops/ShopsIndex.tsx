@@ -27,20 +27,45 @@ const schema = z.object({
 });
 type FormValues = z.infer<typeof schema>;
 
+// Lowercase, hyphen-separated, no leading/trailing/duplicate hyphens --
+// mirrors the shape of the existing "main-garage" placeholder. Backend only
+// enforces length (see DrawerCreate/ToolboxCreate schemas' pattern), no
+// format constraint, so this is purely a client-side UX default.
+function slugify(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 export function ShopsIndex() {
   const queryClient = useQueryClient();
   const [open, setOpen] = React.useState(false);
+  const [slugTouched, setSlugTouched] = React.useState(false);
   const shopsQuery = useQuery({ queryKey: ["shops"], queryFn: () => shopsApi.list() });
 
-  const { register, handleSubmit, reset, formState } = useForm<FormValues>({
+  const { register, handleSubmit, reset, formState, watch, setValue } = useForm<FormValues>({
     resolver: zodResolver(schema),
   });
+  const slugField = register("slug");
+  const nameValue = watch("name");
+
+  // Auto-derives the slug from the name as the user types, until they
+  // manually edit the slug field themselves -- then their edit wins and
+  // further name changes stop overwriting it.
+  React.useEffect(() => {
+    if (!slugTouched) {
+      setValue("slug", slugify(nameValue ?? ""), { shouldValidate: true });
+    }
+  }, [nameValue, slugTouched, setValue]);
 
   const createMutation = useMutation({
     mutationFn: (values: FormValues) => shopsApi.create(values),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["shops"] });
       setOpen(false);
+      setSlugTouched(false);
       reset();
     },
   });
@@ -78,7 +103,15 @@ export function ShopsIndex() {
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="slug">Slug</Label>
-              <Input id="slug" placeholder="main-garage" {...register("slug")} />
+              <Input
+                id="slug"
+                placeholder="main-garage"
+                {...slugField}
+                onChange={(e) => {
+                  setSlugTouched(true);
+                  slugField.onChange(e);
+                }}
+              />
             </div>
             <div className="flex flex-col gap-1">
               <Label htmlFor="location">Location</Label>
