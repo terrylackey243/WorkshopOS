@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
 import { ArrowUpDown, Camera, Plus, Search, Trash2, Upload, X } from "lucide-react";
 import { useForm } from "react-hook-form";
+import { Link } from "react-router-dom";
 import { z } from "zod";
 
 import { FormDialog } from "@/components/FormDialog";
@@ -87,7 +88,14 @@ const toolSchema = z.object({
   // tool's owned `quantity` should get a packed slot in a generated drawer
   // layout (Milestone 3 Phase 3). Mirrors `quantity`'s style.
   insert_quantity: z.coerce.number().int().min(0).optional(),
-  maintenance_interval_days: z.coerce.number().int().min(1).optional(),
+  // `z.coerce.number()` alone turns an empty input into `Number("") === 0`,
+  // which then fails `.min(1)` -- blocking submission on a field labeled
+  // optional. Preprocessing "" to undefined first lets `.optional()` short
+  // -circuit before coercion runs, same as leaving the field untouched.
+  maintenance_interval_days: z.preprocess(
+    (val) => (val === "" ? undefined : val),
+    z.coerce.number().int().min(1).optional(),
+  ),
 });
 type ToolFormValues = z.infer<typeof toolSchema>;
 
@@ -702,7 +710,11 @@ export function ToolsPage() {
           <TableBody>
             {filtered.map((tool) => (
               <TableRow key={tool.id}>
-                <TableCell className="font-medium">{tool.name}</TableCell>
+                <TableCell className="font-medium">
+                  <Link to={`/tools/${tool.id}`} className="hover:underline">
+                    {tool.name}
+                  </Link>
+                </TableCell>
                 <TableCell className="text-muted-foreground">
                   {tool.category || "—"}
                 </TableCell>

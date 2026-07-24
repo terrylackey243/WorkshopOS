@@ -19,6 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import {
   Table,
   TableBody,
@@ -259,22 +260,17 @@ export function DrawerDetail() {
         >
           <div className="col-span-2 flex flex-col gap-1">
             <Label htmlFor="dr-profile">Drawer profile</Label>
-            <Select
+            <SearchableSelect
+              id="dr-profile"
+              placeholder="Select a profile…"
+              searchPlaceholder="Search profiles…"
               value={selectedProfileId}
               onValueChange={(v) => form.setValue("drawer_profile_id", v)}
-            >
-              <SelectTrigger id="dr-profile">
-                <SelectValue placeholder="Select a profile…" />
-              </SelectTrigger>
-              <SelectContent>
-                {(drawerProfilesQuery.data ?? []).map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name} ({p.inside_width_mm}×{p.inside_depth_mm}×
-                    {p.inside_height_mm}mm)
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              options={(drawerProfilesQuery.data ?? []).map((p) => ({
+                value: p.id,
+                label: `${p.name} (${p.inside_width_mm}×${p.inside_depth_mm}×${p.inside_height_mm}mm)`,
+              }))}
+            />
           </div>
           <div className="flex flex-col gap-1">
             <Label htmlFor="name">Name</Label>
