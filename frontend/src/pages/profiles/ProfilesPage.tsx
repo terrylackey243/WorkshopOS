@@ -259,7 +259,7 @@ export function ProfilesPage() {
   if (!tab) return <Navigate to="/profiles/printers" replace />;
 
   return (
-    <div className="p-4">
+    <div className="flex h-full flex-col overflow-auto scrollbar-thin p-4">
       <div className="mb-3">
         <h1 className="text-base font-semibold">Profiles</h1>
         <p className="text-xs text-muted-foreground">

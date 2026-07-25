@@ -1,6 +1,25 @@
+import pytest
 from httpx import AsyncClient
 
+from app.config import get_settings
+
 from .conftest import auth_headers, register_org
+
+
+@pytest.fixture
+def superadmin(monkeypatch: pytest.MonkeyPatch):
+    """Registers a fresh org/user and grants that user's email superadmin
+    access for the duration of one test -- same pattern as test_admin.py's
+    fixture of the same name (roadmap mutations are gated by
+    deps.require_superadmin, same as /admin)."""
+
+    async def _make(client: AsyncClient) -> dict:
+        data = await register_org(client)
+        settings = get_settings()
+        monkeypatch.setattr(settings, "superadmin_emails", data["user"]["email"])
+        return data
+
+    return _make
 
 
 async def test_roadmap_requires_auth(client: AsyncClient) -> None:
@@ -8,11 +27,32 @@ async def test_roadmap_requires_auth(client: AsyncClient) -> None:
     assert resp.status_code == 401
 
 
-async def test_roadmap_list_is_ordered_by_position(client: AsyncClient) -> None:
+async def test_non_superadmin_cannot_mutate_roadmap(client: AsyncClient) -> None:
+    """Any authenticated user can list the roadmap, but create/update/reorder/
+    delete are superadmin-only (see routers/roadmap.py)."""
+    data = await register_org(client)
+    headers = auth_headers(data["access_token"])
+
+    list_resp = await client.get("/roadmap", headers=headers)
+    assert list_resp.status_code == 200
+
+    create_resp = await client.post("/roadmap", json={"title": "Should not work"}, headers=headers)
+    assert create_resp.status_code == 403
+
+    # Seed one item as a superadmin so update/delete/move have a real target.
+    other = await register_org(client)
+    other_headers = auth_headers(other["access_token"])
+    seed = await client.post(
+        "/roadmap", json={"title": "Existing item"}, headers=other_headers
+    )
+    assert seed.status_code == 403  # `other` isn't a superadmin either -- confirms no false positive
+
+
+async def test_roadmap_list_is_ordered_by_position(client: AsyncClient, superadmin) -> None:
     # Note: the real seed data (10 items from migration 0004) is only
     # inserted by Alembic, not by conftest's `Base.metadata.create_all` --
     # this test only asserts on rows it creates itself, not the seed content.
-    data = await register_org(client)
+    data = await superadmin(client)
     headers = auth_headers(data["access_token"])
 
     for title, status_value in [("First", "done"), ("Second", "in_progress"), ("Third", "planned")]:
@@ -25,8 +65,8 @@ async def test_roadmap_list_is_ordered_by_position(client: AsyncClient) -> None:
     assert positions == sorted(positions)
 
 
-async def test_roadmap_crud_and_reorder(client: AsyncClient) -> None:
-    data = await register_org(client)
+async def test_roadmap_crud_and_reorder(client: AsyncClient, superadmin) -> None:
+    data = await superadmin(client)
     headers = auth_headers(data["access_token"])
 
     # Need at least one existing item for the move-up assertions below to

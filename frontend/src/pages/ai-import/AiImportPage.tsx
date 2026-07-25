@@ -90,7 +90,7 @@ export function AiImportPage() {
   }
 
   return (
-    <div className="p-4">
+    <div className="flex h-full flex-col overflow-auto scrollbar-thin p-4">
       <div className="mb-3">
         <h1 className="text-base font-semibold">AI Import</h1>
         <p className="text-xs text-muted-foreground">

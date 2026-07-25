@@ -36,3 +36,21 @@ class AiExtractedRow(BaseModel):
 
 class AiExtractResponse(BaseModel):
     rows: list[AiExtractedRow]
+
+
+class AiToolExtractedRow(BaseModel):
+    # Same "never invent a name" rule as AiExtractedRow.name, but tools have
+    # a fixed field set (no per-type `fields` dict) since there's only one
+    # kind of row here.
+    name: str | None
+    category: str | None
+    manufacturer: str | None
+    notes: str | None
+    quantity: int
+    # 0-100, self-reported by the model. Purely a UI hint (drives preview
+    # text color) -- never validated or acted on server-side.
+    confidence: int
+
+
+class AiToolExtractResponse(BaseModel):
+    rows: list[AiToolExtractedRow]

@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useAuth } from "@/hooks/useAuth";
 import { roadmapApi } from "@/lib/api";
 import type { RoadmapItem, RoadmapStatus } from "@/lib/types";
 
@@ -46,13 +47,17 @@ type ItemFormValues = z.infer<typeof itemSchema>;
 /**
  * Product roadmap -- what WorkshopOS has built and what's still ahead.
  * Deliberately not org-scoped (see lib/api.ts's roadmapApi): every
- * authenticated user sees and can manage the same shared list. Ordering is
- * a plain integer `position`, moved via dedicated move-up/move-down
- * endpoints (atomic server-side swaps) rather than drag-and-drop, which
- * keeps reordering simple and avoids a new drag library dependency for a
- * page that's edited occasionally, not constantly.
+ * authenticated user sees the same shared list, but only a superadmin can
+ * add/edit/reorder/delete entries (backend-enforced via
+ * deps.require_superadmin -- the controls here are hidden for non-admins
+ * purely so they don't see buttons that would just 403, not as the actual
+ * gate). Ordering is a plain integer `position`, moved via dedicated
+ * move-up/move-down endpoints (atomic server-side swaps) rather than
+ * drag-and-drop, which keeps reordering simple and avoids a new drag
+ * library dependency for a page that's edited occasionally, not constantly.
  */
 export function RoadmapPage() {
+  const { isSuperadmin } = useAuth();
   const queryClient = useQueryClient();
   const [open, setOpen] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
@@ -118,6 +123,7 @@ export function RoadmapPage() {
             {doneCount} of {items.length} done. Reorder, edit status, or add new items as plans change.
           </p>
         </div>
+        {isSuperadmin && (
         <FormDialog
           open={open}
           onOpenChange={(o) => {
@@ -178,6 +184,7 @@ export function RoadmapPage() {
             )}
           </form>
         </FormDialog>
+        )}
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -186,6 +193,7 @@ export function RoadmapPage() {
             key={item.id}
             className="flex items-start gap-3 rounded-md border border-border bg-card px-3 py-2.5"
           >
+            {isSuperadmin && (
             <div className="flex flex-col pt-0.5">
               <button
                 type="button"
@@ -206,6 +214,7 @@ export function RoadmapPage() {
                 <ChevronDown className="h-3.5 w-3.5" />
               </button>
             </div>
+            )}
 
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -217,6 +226,7 @@ export function RoadmapPage() {
               )}
             </div>
 
+            {isSuperadmin && (
             <Select
               value={item.status}
               onValueChange={(v) => statusMutation.mutate({ id: item.id, status: v as RoadmapStatus })}
@@ -232,7 +242,9 @@ export function RoadmapPage() {
                 ))}
               </SelectContent>
             </Select>
+            )}
 
+            {isSuperadmin && (
             <Button
               size="icon"
               variant="ghost"
@@ -243,6 +255,7 @@ export function RoadmapPage() {
             >
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
+            )}
           </div>
         ))}
         {itemsQuery.isSuccess && items.length === 0 && (

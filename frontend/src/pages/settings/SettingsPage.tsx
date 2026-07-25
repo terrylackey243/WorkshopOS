@@ -137,7 +137,7 @@ export function SettingsPage() {
   const isPaidPlan = orgQuery.data?.plan?.key !== "free" && !!orgQuery.data?.plan;
 
   return (
-    <div className="flex flex-col gap-4 p-4">
+    <div className="flex h-full flex-col gap-4 overflow-auto scrollbar-thin p-4">
       <div>
         <h1 className="text-base font-semibold">Settings</h1>
         <p className="text-xs text-muted-foreground">

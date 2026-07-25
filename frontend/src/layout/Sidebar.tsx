@@ -1,5 +1,6 @@
 import {
   Box,
+  Camera,
   LayoutDashboard,
   Layers,
   Map,
@@ -79,6 +80,25 @@ export function Sidebar() {
               >
                 <Sparkles className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">AI Import</span>
+              </Link>
+            </TooltipTrigger>
+            <TooltipContent side="right">Add an Anthropic API key in Settings to enable</TooltipContent>
+          </Tooltip>
+        )}
+        {aiImportEnabled ? (
+          <NavLink to="/ai-add-tool" className={navLinkClass}>
+            <Camera className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">AI Add Tool</span>
+          </NavLink>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Link
+                to="/settings#anthropic-api-key"
+                className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground/50 transition-colors hover:bg-accent hover:text-muted-foreground"
+              >
+                <Camera className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">AI Add Tool</span>
               </Link>
             </TooltipTrigger>
             <TooltipContent side="right">Add an Anthropic API key in Settings to enable</TooltipContent>

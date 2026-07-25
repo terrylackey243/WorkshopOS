@@ -252,6 +252,82 @@ async def test_regenerate_unknown_design_returns_404(client: AsyncClient) -> Non
     assert resp.status_code == 404
 
 
+async def test_update_design_changes_fields_and_requeues(client: AsyncClient, tmp_path, monkeypatch) -> None:
+    data = await register_org(client)
+    headers = auth_headers(data["access_token"])
+    org_id = data["organization_id"]
+
+    _, label_style_id = await _create_magnet_and_label_style(client, org_id, headers)
+
+    create_resp = await client.post(
+        f"/organizations/{org_id}/designs",
+        json={"name": "Wrenches Label", "text": "Wrenches", "label_style_profile_id": label_style_id},
+        headers=headers,
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    design_id = create_resp.json()["id"]
+    original_hash = create_resp.json()["content_hash"]
+
+    monkeypatch.setattr(worker_tasks.settings, "generated_files_dir", str(tmp_path))
+    await worker_tasks._generate_design(design_id)
+
+    patch_resp = await client.patch(
+        f"/organizations/{org_id}/designs/{design_id}",
+        json={"name": "Sockets Label", "text": "Sockets", "label_style_profile_id": label_style_id},
+        headers=headers,
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    body = patch_resp.json()
+    assert body["name"] == "Sockets Label"
+    assert body["text"] == "Sockets"
+    assert body["status"] == "queued"
+    assert body["content_hash"] != original_hash
+
+    await worker_tasks._generate_design(design_id)
+    final = await client.get(f"/organizations/{org_id}/designs/{design_id}", headers=headers)
+    assert final.json()["status"] == "generated"
+    assert final.json()["name"] == "Sockets Label"
+
+
+async def test_update_design_rejects_unknown_label_style(client: AsyncClient) -> None:
+    import uuid
+
+    data = await register_org(client)
+    headers = auth_headers(data["access_token"])
+    org_id = data["organization_id"]
+    _, label_style_id = await _create_magnet_and_label_style(client, org_id, headers)
+
+    create_resp = await client.post(
+        f"/organizations/{org_id}/designs",
+        json={"name": "Wrenches Label", "text": "Wrenches", "label_style_profile_id": label_style_id},
+        headers=headers,
+    )
+    design_id = create_resp.json()["id"]
+
+    resp = await client.patch(
+        f"/organizations/{org_id}/designs/{design_id}",
+        json={"name": "Wrenches Label", "text": "Wrenches", "label_style_profile_id": str(uuid.uuid4())},
+        headers=headers,
+    )
+    assert resp.status_code == 404
+
+
+async def test_update_unknown_design_returns_404(client: AsyncClient) -> None:
+    import uuid
+
+    data = await register_org(client)
+    headers = auth_headers(data["access_token"])
+    org_id = data["organization_id"]
+    _, label_style_id = await _create_magnet_and_label_style(client, org_id, headers)
+
+    resp = await client.patch(
+        f"/organizations/{org_id}/designs/{uuid.uuid4()}",
+        json={"name": "Ghost", "text": "Ghost", "label_style_profile_id": label_style_id},
+        headers=headers,
+    )
+    assert resp.status_code == 404
+
+
 async def test_design_create_rejects_unknown_tool_id(client: AsyncClient) -> None:
     data = await register_org(client)
     headers = auth_headers(data["access_token"])

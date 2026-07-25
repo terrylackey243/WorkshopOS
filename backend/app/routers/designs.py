@@ -33,45 +33,51 @@ async def _get_design(session: AsyncSession, organization_id: uuid.UUID, design_
     return design
 
 
-@router.post("", response_model=DesignRead, status_code=status.HTTP_201_CREATED)
-async def create_design(
+async def _resolve_design_refs(
+    session: AsyncSession,
     organization_id: uuid.UUID,
-    payload: DesignCreate,
-    membership: Membership = Depends(get_current_membership),
-    session: AsyncSession = Depends(get_session),
-) -> Design:
+    label_style_profile_id: uuid.UUID,
+    magnet_profile_id: uuid.UUID | None,
+    shop_id: uuid.UUID | None,
+    tool_id: uuid.UUID | None,
+) -> tuple[LabelStyleProfile, MagnetProfile | None, str | None]:
+    """Looks up and validates the profile/shop/tool references shared by
+    `create_design` and `update_design`, and resolves the QR deep-link URL.
+    Returns the label style, resolved magnet (falling back to the label
+    style's own default when omitted), and QR url (None when no tool linked).
+    """
     label_style = await session.scalar(
         select(LabelStyleProfile).where(
-            LabelStyleProfile.id == payload.label_style_profile_id,
+            LabelStyleProfile.id == label_style_profile_id,
             LabelStyleProfile.organization_id == organization_id,
         )
     )
     if label_style is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Label style profile not found.")
 
-    magnet_profile_id = payload.magnet_profile_id or label_style.default_magnet_profile_id
+    resolved_magnet_id = magnet_profile_id or label_style.default_magnet_profile_id
     magnet: MagnetProfile | None = None
-    if magnet_profile_id is not None:
+    if resolved_magnet_id is not None:
         magnet = await session.scalar(
             select(MagnetProfile).where(
-                MagnetProfile.id == magnet_profile_id,
+                MagnetProfile.id == resolved_magnet_id,
                 MagnetProfile.organization_id == organization_id,
             )
         )
         if magnet is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Magnet profile not found.")
 
-    if payload.shop_id is not None:
+    if shop_id is not None:
         shop = await session.scalar(
-            select(Shop).where(Shop.id == payload.shop_id, Shop.organization_id == organization_id)
+            select(Shop).where(Shop.id == shop_id, Shop.organization_id == organization_id)
         )
         if shop is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found.")
 
     qr_url: str | None = None
-    if payload.tool_id is not None:
+    if tool_id is not None:
         tool = await session.scalar(
-            select(Tool).where(Tool.id == payload.tool_id, Tool.organization_id == organization_id)
+            select(Tool).where(Tool.id == tool_id, Tool.organization_id == organization_id)
         )
         if tool is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tool not found.")
@@ -79,6 +85,25 @@ async def create_design(
         # redirect URLs -- same "where does this deployment's frontend live"
         # setting, no new config needed.
         qr_url = f"{settings.app_public_url}/tools/{tool.id}"
+
+    return label_style, magnet, qr_url
+
+
+@router.post("", response_model=DesignRead, status_code=status.HTTP_201_CREATED)
+async def create_design(
+    organization_id: uuid.UUID,
+    payload: DesignCreate,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> Design:
+    label_style, magnet, qr_url = await _resolve_design_refs(
+        session,
+        organization_id,
+        payload.label_style_profile_id,
+        payload.magnet_profile_id,
+        payload.shop_id,
+        payload.tool_id,
+    )
 
     params_dict = build_label_parameters(label_style, magnet, payload.text, qr_url=qr_url)
     try:
@@ -134,6 +159,57 @@ async def get_design(
     session: AsyncSession = Depends(get_session),
 ) -> Design:
     return await _get_design(session, organization_id, design_id)
+
+
+@router.patch("/{design_id}", response_model=DesignRead)
+async def update_design(
+    organization_id: uuid.UUID,
+    design_id: uuid.UUID,
+    payload: DesignCreate,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> Design:
+    """Edits an existing design's fields in place and re-enqueues generation
+    -- every field here (text, label style, magnet, tool link) feeds
+    `parameters_json`, so there's no way to change one without a new STL.
+    Unlike `regenerate_design` (which re-derives params from the design's
+    *existing* FKs), this first repoints those FKs at whatever the edit form
+    submitted.
+    """
+    design = await _get_design(session, organization_id, design_id)
+
+    label_style, magnet, qr_url = await _resolve_design_refs(
+        session,
+        organization_id,
+        payload.label_style_profile_id,
+        payload.magnet_profile_id,
+        payload.shop_id,
+        payload.tool_id,
+    )
+
+    params_dict = build_label_parameters(label_style, magnet, payload.text, qr_url=qr_url)
+    try:
+        engine_version, content_hash = compute_manifest_fields(params_dict)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    design.name = payload.name
+    design.text = payload.text
+    design.shop_id = payload.shop_id
+    design.tool_id = payload.tool_id
+    design.label_style_profile_id = label_style.id
+    design.magnet_profile_id = magnet.id if magnet is not None else None
+    design.parameters_json = params_dict
+    design.engine_version = engine_version
+    design.content_hash = content_hash
+    design.status = "queued"
+    design.error_message = None
+    await session.commit()
+    await session.refresh(design)
+
+    generate_design.send(str(design.id))
+
+    return design
 
 
 @router.post("/{design_id}/regenerate", response_model=DesignRead)
@@ -253,4 +329,13 @@ async def get_design_file(
     if not path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generated file not available yet.")
 
-    return FileResponse(path, media_type="model/stl", filename=f"{kind}.stl")
+    # This URL is stable across regenerations (same design_id/kind), but the
+    # file it points at is overwritten in place every time -- FileResponse's
+    # default Last-Modified/ETag headers with no Cache-Control let a browser
+    # serve a stale cached copy for a design edited/regenerated after the
+    # first view, without ever re-requesting it. `no-store` forces a fresh
+    # fetch every time so the preview/download always reflects the current
+    # generation, at the cost of re-downloading an unchanged file.
+    return FileResponse(
+        path, media_type="model/stl", filename=f"{kind}.stl", headers={"Cache-Control": "no-store"}
+    )

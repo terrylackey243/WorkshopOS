@@ -5,6 +5,7 @@ import type {
   AdminOrganization,
   AiExtractedRow,
   AiExtractPayload,
+  AiToolExtractedRow,
   Dashboard,
   Design,
   DeploymentConfig,
@@ -192,6 +193,21 @@ export const aiImportApi = {
       .then((r) => r.data.rows),
 };
 
+/**
+ * AI Add Tool: identifies tools in a reference-sheet photo. Multipart like
+ * `uploadToolPhoto`/`importTools` (no manual Content-Type -- axios infers
+ * the multipart boundary from the `FormData` body). Unlike `aiImportApi.extract`,
+ * the photo is never persisted server-side -- it's used once for this call
+ * and discarded.
+ */
+export function extractToolsFromPhoto(file: File): Promise<AiToolExtractedRow[]> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return http
+    .post<{ rows: AiToolExtractedRow[] }>(orgPath("/tools/ai-import/extract"), formData)
+    .then((r) => r.data.rows);
+}
+
 // ---------------------------------------------------------------------------
 // Deployment config: unauthenticated, top-level route (like `/health`), not
 // under `/api`'s org-scoped convention -- read before any auth state exists
@@ -369,6 +385,8 @@ export const designsApi = {
   get: (id: string) => http.get<Design>(orgPath(`/designs/${id}`)).then((r) => r.data),
   create: (payload: DesignCreatePayload) =>
     http.post<Design>(orgPath("/designs"), payload).then((r) => r.data),
+  update: (id: string, payload: DesignCreatePayload) =>
+    http.patch<Design>(orgPath(`/designs/${id}`), payload).then((r) => r.data),
   regenerate: (id: string) =>
     http.post<Design>(orgPath(`/designs/${id}/regenerate`)).then((r) => r.data),
   remove: (id: string) =>
@@ -379,14 +397,26 @@ export const designsApi = {
  * STL downloads require the same Bearer auth as every other route, so a
  * plain `<a href>` won't work -- fetch as a blob through the authenticated
  * `http` client instead (see plan §"Downloads are authenticated blobs").
+ *
+ * `contentHash` is appended as a cache-busting query param -- this URL is
+ * otherwise stable across regenerations (same design_id/kind) while the
+ * file it points at is overwritten in place, so any HTTP cache that keys
+ * purely on URL (a browser's local disk cache, a CDN, an intermediate
+ * proxy) can end up serving bytes from before the latest regeneration
+ * indefinitely, regardless of the origin's own Cache-Control header --
+ * that header only governs *future* responses, not one a client already
+ * cached under the old (no-Cache-Control) response before this fix shipped.
+ * Varying the URL itself sidesteps every such cache at once.
  */
 export function fetchDesignFile(
   designId: string,
   kind: "outline" | "text" | "qr",
+  contentHash?: string,
 ): Promise<Blob> {
   return http
     .get<Blob>(orgPath(`/designs/${designId}/files/${kind}`), {
       responseType: "blob",
+      params: contentHash ? { v: contentHash } : undefined,
     })
     .then((r) => r.data);
 }
@@ -590,6 +620,41 @@ export const drawerLayoutsApi = {
       )
       .then((r) => r.data),
 };
+
+export interface DrawerOption {
+  id: string;
+  label: string;
+}
+
+/**
+ * Flattened `"Shop / Toolbox / Drawer"` list across every drawer in the org
+ * -- an N (shops) x M (toolboxes) x K (drawers) fan-out of the nested
+ * `toolboxesApi`/`drawersApi` list calls, collapsed into one array for a
+ * single-`<Select>` drawer picker. Shared by `ToolsPage.tsx`'s manual "New
+ * tool" form and the AI Add Tool preview rows' per-row drawer override --
+ * originally lived only in `ToolsPage.tsx` before being lifted here.
+ */
+export async function fetchAllDrawerOptions(): Promise<DrawerOption[]> {
+  const shops = await shopsApi.list();
+  const toolboxesByShop = await Promise.all(
+    shops.map((shop) => toolboxesApi.list(shop.id)),
+  );
+  const toolboxes = toolboxesByShop.flatMap((list, i) =>
+    list.map((toolbox) => ({ toolbox, shop: shops[i] })),
+  );
+  const drawersByToolbox = await Promise.all(
+    toolboxes.map(({ toolbox, shop }) => drawersApi.list(shop.id, toolbox.id)),
+  );
+  return drawersByToolbox.flatMap((list, i) => {
+    const { toolbox, shop } = toolboxes[i];
+    return list.map((drawer) => ({
+      id: drawer.id,
+      label: `${shop.name} / ${toolbox.name} / ${
+        drawer.name || drawer.position_label || "Drawer"
+      }`,
+    }));
+  });
+}
 
 /**
  * Plate STL downloads require the same Bearer auth as every other route, so

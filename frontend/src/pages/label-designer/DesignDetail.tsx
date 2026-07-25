@@ -1,12 +1,19 @@
 import * as React from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios from "axios";
-import { Download, Loader2, RefreshCw } from "lucide-react";
+import { Download, Loader2, Pencil, RefreshCw } from "lucide-react";
+import { useForm } from "react-hook-form";
 import { useParams } from "react-router-dom";
 
+import { FormDialog } from "@/components/FormDialog";
 import { StlPreview } from "@/components/StlPreview";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { designsApi, fetchDesignFile, triggerBlobDownload } from "@/lib/api";
+import { designSchema, DesignLinkFields, type DesignFormValues } from "@/pages/label-designer/DesignFormFields";
 
 /**
  * Turns an object into a filesystem-safe filename stem (`Drawer Labels` ->
@@ -51,12 +58,12 @@ export function DesignDetail() {
   // `tool.id, tool.updated_at` query key.
   const outlineBlobQuery = useQuery({
     queryKey: ["design-file", designId, "outline", design?.generated_at],
-    queryFn: () => fetchDesignFile(designId as string, "outline"),
+    queryFn: () => fetchDesignFile(designId as string, "outline", design?.content_hash),
     enabled: !!designId && isGenerated,
   });
   const textBlobQuery = useQuery({
     queryKey: ["design-file", designId, "text", design?.generated_at],
-    queryFn: () => fetchDesignFile(designId as string, "text"),
+    queryFn: () => fetchDesignFile(designId as string, "text", design?.content_hash),
     enabled: !!designId && isGenerated,
   });
   // Only present when this design is linked to a Tool (`design.tool_id` set)
@@ -64,7 +71,7 @@ export function DesignDetail() {
   // never runs for the common case.
   const qrBlobQuery = useQuery({
     queryKey: ["design-file", designId, "qr", design?.generated_at],
-    queryFn: () => fetchDesignFile(designId as string, "qr"),
+    queryFn: () => fetchDesignFile(designId as string, "qr", design?.content_hash),
     enabled: !!designId && isGenerated && !!design?.tool_id,
   });
 
@@ -121,6 +128,59 @@ export function DesignDetail() {
         ? "Failed to regenerate label."
         : null;
 
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [editError, setEditError] = React.useState<string | null>(null);
+  const editForm = useForm<DesignFormValues>({
+    resolver: zodResolver(designSchema),
+    defaultValues: { name: "", text: "", label_style_profile_id: "" },
+  });
+
+  // Reset the form to the design's current values each time the dialog
+  // opens, rather than on every `design` refetch -- otherwise a background
+  // poll while the dialog is open (e.g. status flipping to "generated")
+  // would blow away whatever the user is mid-typing.
+  React.useEffect(() => {
+    if (design && editOpen) {
+      editForm.reset({
+        name: design.name,
+        text: design.text,
+        label_style_profile_id: design.label_style_profile_id ?? "",
+        magnet_profile_id: design.magnet_profile_id ?? undefined,
+        shop_id: design.shop_id ?? undefined,
+        tool_id: design.tool_id ?? undefined,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editOpen]);
+
+  const updateMutation = useMutation({
+    mutationFn: (values: DesignFormValues) =>
+      designsApi.update(designId as string, {
+        name: values.name,
+        text: values.text,
+        label_style_profile_id: values.label_style_profile_id,
+        magnet_profile_id: values.magnet_profile_id || undefined,
+        shop_id: values.shop_id || undefined,
+        tool_id: values.tool_id || undefined,
+      }),
+    onSuccess: () => {
+      // Editing re-enqueues generation server-side just like regenerate
+      // does, so the same invalidation drives the polling refetch below.
+      queryClient.invalidateQueries({ queryKey: ["designs", designId] });
+      queryClient.invalidateQueries({ queryKey: ["designs"] });
+      setEditOpen(false);
+      setEditError(null);
+    },
+    onError: (error: unknown) => {
+      if (axios.isAxiosError(error) && error.response?.status === 422) {
+        const detail = error.response.data?.detail;
+        setEditError(typeof detail === "string" ? detail : "Invalid design parameters.");
+      } else {
+        setEditError("Failed to save design. Please try again.");
+      }
+    },
+  });
+
   if (designQuery.isLoading) {
     return <p className="p-4 text-sm text-muted-foreground">Loading design…</p>;
   }
@@ -138,15 +198,58 @@ export function DesignDetail() {
           <h1 className="text-base font-semibold">{design.name}</h1>
           <p className="text-sm text-muted-foreground">"{design.text}"</p>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={isRegenerating}
-          onClick={() => regenerateMutation.mutate()}
-        >
-          <RefreshCw className={isRegenerating ? "animate-spin" : undefined} />
-          {isRegenerating ? "Regenerating…" : "Regenerate"}
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          <FormDialog
+            open={editOpen}
+            onOpenChange={(o) => {
+              setEditOpen(o);
+              if (!o) setEditError(null);
+            }}
+            trigger={
+              <Button size="sm" variant="outline">
+                <Pencil />
+                Edit
+              </Button>
+            }
+            title="Edit design"
+            description="Changes re-derive the STL parameters and re-enqueue generation."
+            formId="edit-design"
+            submitting={updateMutation.isPending}
+          >
+            <form
+              id="edit-design"
+              onSubmit={editForm.handleSubmit((v) => {
+                setEditError(null);
+                updateMutation.mutate(v);
+              })}
+              className="flex flex-col gap-3"
+            >
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="edit-design-name">Name</Label>
+                <Input id="edit-design-name" {...editForm.register("name")} />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="edit-design-text">Text</Label>
+                <Textarea id="edit-design-text" {...editForm.register("text")} />
+              </div>
+              <DesignLinkFields form={editForm} />
+              {editError && (
+                <p className="rounded-sm border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+                  {editError}
+                </p>
+              )}
+            </form>
+          </FormDialog>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={isRegenerating}
+            onClick={() => regenerateMutation.mutate()}
+          >
+            <RefreshCw className={isRegenerating ? "animate-spin" : undefined} />
+            {isRegenerating ? "Regenerating…" : "Regenerate"}
+          </Button>
+        </div>
       </div>
       {regenerateError && (
         <p className="text-xs text-destructive">{regenerateError}</p>

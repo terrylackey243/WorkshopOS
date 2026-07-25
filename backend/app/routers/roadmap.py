@@ -7,14 +7,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..db import get_session
-from ..deps import get_current_user
+from ..deps import get_current_user, require_superadmin
 from ..models import RoadmapItem, User
 from ..schemas.roadmap import RoadmapItemCreate, RoadmapItemRead, RoadmapItemUpdate
 
 # Deliberately NOT nested under /organizations/{organization_id} -- this is a
 # shared product roadmap (WorkshopOS's own development progress), not
-# per-tenant data. Any authenticated user can view/manage it; there's no
-# per-organization ownership to scope against. See app/models/roadmap.py.
+# per-tenant data; there's no per-organization ownership to scope against.
+# Any authenticated user can view it, but only a superadmin (see
+# deps.require_superadmin) can create/edit/reorder/delete entries -- it's
+# WorkshopOS's own roadmap, not something every user should be able to edit.
+# See app/models/roadmap.py.
 router = APIRouter(prefix="/roadmap", tags=["roadmap"])
 
 
@@ -37,7 +40,7 @@ async def list_roadmap_items(
 @router.post("", response_model=RoadmapItemRead, status_code=status.HTTP_201_CREATED)
 async def create_roadmap_item(
     payload: RoadmapItemCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superadmin),
     session: AsyncSession = Depends(get_session),
 ) -> RoadmapItem:
     max_position = await session.scalar(select(func.max(RoadmapItem.position)))
@@ -57,7 +60,7 @@ async def create_roadmap_item(
 async def update_roadmap_item(
     item_id: uuid.UUID,
     payload: RoadmapItemUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superadmin),
     session: AsyncSession = Depends(get_session),
 ) -> RoadmapItem:
     item = await _get_item(session, item_id)
@@ -71,7 +74,7 @@ async def update_roadmap_item(
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_roadmap_item(
     item_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superadmin),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     item = await _get_item(session, item_id)
@@ -99,7 +102,7 @@ async def _swap_with_neighbor(
 @router.post("/{item_id}/move-up", response_model=RoadmapItemRead)
 async def move_roadmap_item_up(
     item_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superadmin),
     session: AsyncSession = Depends(get_session),
 ) -> RoadmapItem:
     return await _swap_with_neighbor(session, item_id, direction="up")
@@ -108,7 +111,7 @@ async def move_roadmap_item_up(
 @router.post("/{item_id}/move-down", response_model=RoadmapItemRead)
 async def move_roadmap_item_down(
     item_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_superadmin),
     session: AsyncSession = Depends(get_session),
 ) -> RoadmapItem:
     return await _swap_with_neighbor(session, item_id, direction="down")

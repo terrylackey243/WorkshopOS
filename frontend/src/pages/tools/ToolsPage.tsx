@@ -30,14 +30,12 @@ import {
 import {
   checkoutTool,
   deleteToolPhoto,
-  drawersApi,
+  fetchAllDrawerOptions,
   fetchToolPhoto,
   importTools,
   insertDesignsApi,
   markMaintenanceDone,
   returnTool,
-  shopsApi,
-  toolboxesApi,
   toolsApi,
   triggerBlobDownload,
   uploadToolPhoto,
@@ -47,33 +45,6 @@ import type { Tool } from "@/lib/types";
 
 const IMPORT_TEMPLATE_CSV =
   "name,category,manufacturer,sku,notes,quantity\nCordless Drill,Power Tools,DeWalt,DCD771,,1\n";
-
-interface DrawerOption {
-  id: string;
-  label: string;
-}
-
-async function fetchAllDrawerOptions(): Promise<DrawerOption[]> {
-  const shops = await shopsApi.list();
-  const toolboxesByShop = await Promise.all(
-    shops.map((shop) => toolboxesApi.list(shop.id)),
-  );
-  const toolboxes = toolboxesByShop.flatMap((list, i) =>
-    list.map((toolbox) => ({ toolbox, shop: shops[i] })),
-  );
-  const drawersByToolbox = await Promise.all(
-    toolboxes.map(({ toolbox, shop }) => drawersApi.list(shop.id, toolbox.id)),
-  );
-  return drawersByToolbox.flatMap((list, i) => {
-    const { toolbox, shop } = toolboxes[i];
-    return list.map((drawer) => ({
-      id: drawer.id,
-      label: `${shop.name} / ${toolbox.name} / ${
-        drawer.name || drawer.position_label || "Drawer"
-      }`,
-    }));
-  });
-}
 
 const toolSchema = z.object({
   name: z.string().min(1, "Required"),

@@ -56,6 +56,19 @@ export interface AiExtractedRow {
   name_conflict: boolean;
 }
 
+// Matches backend `AiToolExtractedRow` (app/schemas/ai_import.py) -- the AI
+// Add Tool preview row shape. Unlike `AiExtractedRow`, tools have one fixed
+// field set (no per-profile-type `fields` dict), and `confidence` (0-100,
+// self-reported by the model) drives the preview row's text color.
+export interface AiToolExtractedRow {
+  name: string | null;
+  category: string | null;
+  manufacturer: string | null;
+  notes: string | null;
+  quantity: number;
+  confidence: number;
+}
+
 // `GET /config` -- unauthenticated, top-level (not org-scoped), read before
 // any auth state exists so the frontend knows whether to render the
 // self-hosted license-key panel or the SaaS Stripe upgrade buttons.
