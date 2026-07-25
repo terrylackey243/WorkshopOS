@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import axios from "axios";
+import { Camera } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -12,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  AI_TOOL_PHOTO_MAX_BYTES,
   extractToolsFromPhoto,
   fetchAllDrawerOptions,
   shopsApi,
@@ -49,8 +51,10 @@ export function AiAddToolPage() {
   const [summary, setSummary] = useState<CommitSummary | null>(null);
   const [isCommitting, setIsCommitting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
   const rowRefs = useRef(new Map<string, PreviewRowHandle | null>());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const shopsQuery = useQuery({ queryKey: ["shops"], queryFn: () => shopsApi.list() });
   const toolboxesQuery = useQuery({
@@ -79,6 +83,21 @@ export function AiAddToolPage() {
   });
 
   function handleFile(file: File) {
+    if (file.size > AI_TOOL_PHOTO_MAX_BYTES) {
+      // Reject client-side before ever starting the upload -- found by hand
+      // when a 39MB file's upload stalled on a slow connection and got
+      // dropped mid-transfer with no HTTP response at all, leaving the page
+      // stuck on "Identifying tools..." forever (see extractToolsFromPhoto's
+      // timeout for the other half of that fix). The server would reject
+      // this file anyway once fully uploaded, so there's no reason to make
+      // the user wait through the upload first.
+      setFileError(
+        `Photo exceeds the ${AI_TOOL_PHOTO_MAX_BYTES / (1024 * 1024)}MB upload limit ` +
+          `(this one is ${(file.size / (1024 * 1024)).toFixed(1)}MB). Try a smaller export/JPEG.`,
+      );
+      return;
+    }
+    setFileError(null);
     extractMutation.mutate(file);
   }
 
@@ -115,6 +134,11 @@ export function AiAddToolPage() {
     setRows((prev) => prev.filter((r) => !created.includes(r.key)));
     setSummary({ created: created.length, failed });
     setIsCommitting(false);
+  }
+
+  function handleRejectAll() {
+    setRows([]);
+    setSummary(null);
   }
 
   const drawerOptions = useMemo(() => drawerOptionsQuery.data ?? [], [drawerOptionsQuery.data]);
@@ -229,16 +253,51 @@ export function AiAddToolPage() {
                 e.target.value = "";
               }}
             />
+            {/* `capture="environment"` sends a mobile browser straight into
+                the rear camera instead of the OS's Photo Library/Take
+                Photo/Browse chooser -- ignored on desktop, where this input
+                just behaves like the one above. Separate input (not reused)
+                because an input can't switch `capture` on and off live. */}
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              disabled={!canUpload}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
+                e.target.value = "";
+              }}
+            />
             <p>
               {canUpload
                 ? "Drop a photo here, or click to browse"
                 : "Select a shop, toolbox, and drawer first"}
             </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!canUpload}
+              onClick={(e) => {
+                e.stopPropagation();
+                cameraInputRef.current?.click();
+              }}
+            >
+              <Camera className="h-3.5 w-3.5" />
+              Take Photo
+            </Button>
             {extractMutation.isPending && <p className="text-xs">Identifying tools…</p>}
           </div>
-          {extractMutation.isError && (
+          {fileError && <p className="text-xs text-destructive">{fileError}</p>}
+          {!fileError && extractMutation.isError && (
             <p className="text-xs text-destructive">
-              {extractErrorMessage(extractMutation.error, "Failed to identify tools in this photo.")}
+              {extractErrorMessage(
+                extractMutation.error,
+                "Failed to identify tools in this photo. The connection may have dropped mid-upload -- try again.",
+              )}
             </p>
           )}
         </div>
@@ -261,9 +320,19 @@ export function AiAddToolPage() {
               onRemove={() => setRows((prev) => prev.filter((r) => r.key !== key))}
             />
           ))}
-          <Button className="w-fit" disabled={isCommitting} onClick={handleCommit}>
-            {isCommitting ? "Creating…" : `Create ${rows.length} tool${rows.length === 1 ? "" : "s"}`}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button className="w-fit" disabled={isCommitting} onClick={handleCommit}>
+              {isCommitting ? "Creating…" : `Create ${rows.length} tool${rows.length === 1 ? "" : "s"}`}
+            </Button>
+            <Button
+              className="w-fit"
+              variant="outline"
+              disabled={isCommitting}
+              onClick={handleRejectAll}
+            >
+              Reject All
+            </Button>
+          </div>
         </div>
       )}
 

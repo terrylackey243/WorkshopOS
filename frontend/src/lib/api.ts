@@ -193,18 +193,33 @@ export const aiImportApi = {
       .then((r) => r.data.rows),
 };
 
+// Matches the backend's own PHOTO_MAX_BYTES (backend/app/routers/tools.py) --
+// checked client-side too so an oversized file is rejected instantly instead
+// of the user waiting through however long it takes to upload something the
+// server was always going to reject.
+export const AI_TOOL_PHOTO_MAX_BYTES = 10 * 1024 * 1024;
+
 /**
  * AI Add Tool: identifies tools in a reference-sheet photo. Multipart like
  * `uploadToolPhoto`/`importTools` (no manual Content-Type -- axios infers
  * the multipart boundary from the `FormData` body). Unlike `aiImportApi.extract`,
  * the photo is never persisted server-side -- it's used once for this call
  * and discarded.
+ *
+ * `timeout` is set (unlike every other call in this file, which rely on the
+ * server eventually responding) because this is a slow upload over a
+ * multi-hop proxy chain (Cloudflare -> cloudflared -> nginx -> uvicorn) --
+ * found by hand when a large upload's connection was dropped somewhere in
+ * that chain without ever producing an HTTP response, leaving the caller's
+ * promise pending forever with no way to detect or recover from it.
  */
 export function extractToolsFromPhoto(file: File): Promise<AiToolExtractedRow[]> {
   const formData = new FormData();
   formData.append("file", file);
   return http
-    .post<{ rows: AiToolExtractedRow[] }>(orgPath("/tools/ai-import/extract"), formData)
+    .post<{ rows: AiToolExtractedRow[] }>(orgPath("/tools/ai-import/extract"), formData, {
+      timeout: 120_000,
+    })
     .then((r) => r.data.rows);
 }
 
