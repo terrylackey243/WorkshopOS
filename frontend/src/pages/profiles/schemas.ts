@@ -28,14 +28,28 @@ export const printerDefaultValues: PrinterFormValues = {
   usable_margin_mm: 2.0,
 };
 
-export const magnetSchema = z.object({
-  name: z.string().min(1),
-  diameter_mm: z.coerce.number().positive(),
-  thickness_mm: z.coerce.number().positive(),
-  diameter_clearance_mm: z.coerce.number().min(0).default(0.2),
-  depth_clearance_mm: z.coerce.number().min(0).default(0.2),
-  fit_type: z.string().default("glue"),
-});
+export const magnetSchema = z
+  .object({
+    name: z.string().min(1),
+    diameter_mm: z.coerce.number().positive(),
+    thickness_mm: z.coerce.number().positive(),
+    diameter_clearance_mm: z.coerce.number().min(0).default(0.2),
+    depth_clearance_mm: z.coerce.number().min(0).default(0.2),
+    fit_type: z.enum(["press", "glue", "sealed"]).default("glue"),
+    // Only meaningful (and only sent to the backend) when fit_type is
+    // "sealed" -- see MagnetsTab's fit-type change handler, which clears
+    // this back to undefined for "press"/"glue".
+    seal_cap_mm: z.coerce.number().positive().optional(),
+  })
+  .superRefine((values, ctx) => {
+    if (values.fit_type === "sealed" && !values.seal_cap_mm) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["seal_cap_mm"],
+        message: "Required for a sealed fit",
+      });
+    }
+  });
 export type MagnetFormValues = z.infer<typeof magnetSchema>;
 
 export const magnetDefaultValues: MagnetFormValues = {
@@ -45,6 +59,19 @@ export const magnetDefaultValues: MagnetFormValues = {
   diameter_clearance_mm: 0.2,
   depth_clearance_mm: 0.2,
   fit_type: "glue",
+  seal_cap_mm: undefined,
+};
+
+// Values MagnetsTab writes into diameter_clearance_mm/seal_cap_mm whenever
+// the fit_type dropdown changes, so the geometry a fit type implies is
+// never left mismatched with stale field values from a previous selection.
+export const MAGNET_FIT_TYPE_DEFAULTS: Record<
+  MagnetFormValues["fit_type"],
+  { diameter_clearance_mm: number; seal_cap_mm: number | undefined }
+> = {
+  press: { diameter_clearance_mm: 0, seal_cap_mm: undefined },
+  glue: { diameter_clearance_mm: 0.2, seal_cap_mm: undefined },
+  sealed: { diameter_clearance_mm: 0.2, seal_cap_mm: 0.6 },
 };
 
 export const materialSchema = z.object({

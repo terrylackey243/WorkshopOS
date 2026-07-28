@@ -97,3 +97,50 @@ async def test_magnet_and_label_style_profiles_smoke(client: AsyncClient) -> Non
     assert label_resp.status_code == 201, label_resp.text
     assert label_resp.json()["default_magnet_profile_id"] == magnet_id
     assert float(label_resp.json()["text_height_mm"]) == 15.843
+
+
+async def test_magnet_sealed_fit_requires_seal_cap_mm(client: AsyncClient) -> None:
+    data = await register_org(client)
+    headers = auth_headers(data["access_token"])
+    org_id = data["organization_id"]
+
+    missing_cap = await client.post(
+        f"/organizations/{org_id}/profiles/magnets",
+        json={"name": "Sealed 6x2.5mm", "diameter_mm": "6", "thickness_mm": "2.5", "fit_type": "sealed"},
+        headers=headers,
+    )
+    assert missing_cap.status_code == 422, missing_cap.text
+
+    ok = await client.post(
+        f"/organizations/{org_id}/profiles/magnets",
+        json={
+            "name": "Sealed 6x2.5mm",
+            "diameter_mm": "6",
+            "thickness_mm": "2.5",
+            "fit_type": "sealed",
+            "seal_cap_mm": "0.6",
+        },
+        headers=headers,
+    )
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["fit_type"] == "sealed"
+    assert float(ok.json()["seal_cap_mm"]) == 0.6
+
+
+async def test_magnet_non_sealed_fit_rejects_seal_cap_mm(client: AsyncClient) -> None:
+    data = await register_org(client)
+    headers = auth_headers(data["access_token"])
+    org_id = data["organization_id"]
+
+    resp = await client.post(
+        f"/organizations/{org_id}/profiles/magnets",
+        json={
+            "name": "Glued 6x2.5mm",
+            "diameter_mm": "6",
+            "thickness_mm": "2.5",
+            "fit_type": "glue",
+            "seal_cap_mm": "0.6",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422, resp.text

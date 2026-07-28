@@ -44,6 +44,11 @@ class MagnetProfile(ProfileBase, Base):
     diameter_clearance_mm: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False, default=Decimal("0.2"))
     depth_clearance_mm: Mapped[Decimal] = mapped_column(Numeric(6, 3), nullable=False, default=Decimal("0.2"))
     fit_type: Mapped[str] = mapped_column(String(30), nullable=False, default="glue")
+    # Only meaningful (non-NULL) when fit_type == "sealed" -- see
+    # MagnetProfileCreate's cross-field validation. Thickness of solid
+    # material printed over the pocket opening after the magnet is dropped
+    # in mid-print, instead of leaving the pocket open for gluing.
+    seal_cap_mm: Mapped[Decimal | None] = mapped_column(Numeric(6, 3), nullable=True)
 
 
 class MaterialProfile(ProfileBase, Base):

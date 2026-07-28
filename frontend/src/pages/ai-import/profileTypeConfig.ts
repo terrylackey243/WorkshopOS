@@ -73,7 +73,7 @@ export const PROFILE_TYPE_CONFIG: Record<AiProfileTypeKey, ProfileTypeConfig> = 
       { name: "fit_type", label: "Fit type", kind: "text" },
     ],
     placeholder:
-      "One line per magnet — name, diameter × thickness. Optional: clearance, fit type (press/snug/glue/loose, default glue).\ne.g. 6x2 press-fit — 6mm diameter x 2mm thick — press fit",
+      "One line per magnet — name, diameter × thickness. Optional: clearance, fit type (press/glue/sealed, default glue).\ne.g. 6x2 press-fit — 6mm diameter x 2mm thick — press fit",
   },
   material: {
     label: "Material",

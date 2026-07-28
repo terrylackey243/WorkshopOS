@@ -26,6 +26,7 @@ def build_label_parameters(
             "thickness_mm": float(magnet.thickness_mm),
             "diameter_clearance_mm": float(magnet.diameter_clearance_mm),
             "depth_clearance_mm": float(magnet.depth_clearance_mm),
+            "seal_cap_mm": float(magnet.seal_cap_mm) if magnet.seal_cap_mm is not None else 0.0,
             "count": label_style.magnet_count,
             "edge_offset_mm": float(label_style.magnet_edge_offset_mm),
             "minimum_bridge_mm": float(label_style.magnet_minimum_bridge_mm),

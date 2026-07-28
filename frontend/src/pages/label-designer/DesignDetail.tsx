@@ -13,7 +13,36 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { designsApi, fetchDesignFile, triggerBlobDownload } from "@/lib/api";
+import type { Design } from "@/lib/types";
 import { designSchema, DesignLinkFields, type DesignFormValues } from "@/pages/label-designer/DesignFormFields";
+
+/**
+ * For a "sealed" (print-in-place) magnet profile, the Z height -- measured
+ * from the print bed, after the slicer flip called out in the generation
+ * manifest's orientation note -- at which the recess is fully formed and
+ * ready for the magnet, right before the seal cap's layers begin. Not a
+ * layer *number*: this app has no notion of a printer's layer height, and
+ * every slicer's own "pause at height" feature takes a Z value in mm
+ * directly, so there's nothing to convert.
+ *
+ * `body_depth_mm - seal_cap_mm`: parameters_json's `magnets.seal_cap_mm` is
+ * how much solid material sits *above* the pocket opening (see
+ * label_engine.py's MagnetPocketParameters) in the *design's* coordinate
+ * frame, where the opening faces down (z=0). The physical print is that
+ * design flipped face-down against the bed, so a design-frame height above
+ * the opening becomes a bed-frame height *below* the top of the print --
+ * i.e. print_height = body_depth_mm - design_z, evaluated at the seal
+ * cap's start.
+ */
+function sealedMagnetPauseHeightMm(design: Design): { pauseHeightMm: number; count: number } | null {
+  const params = design.parameters_json as
+    | { body_depth_mm?: number; magnets?: { seal_cap_mm?: number; count?: number } | null }
+    | undefined;
+  const magnets = params?.magnets;
+  const bodyDepthMm = params?.body_depth_mm;
+  if (!magnets || !magnets.seal_cap_mm || magnets.seal_cap_mm <= 0 || bodyDepthMm == null) return null;
+  return { pauseHeightMm: bodyDepthMm - magnets.seal_cap_mm, count: magnets.count ?? 1 };
+}
 
 /**
  * Turns an object into a filesystem-safe filename stem (`Drawer Labels` ->
@@ -254,6 +283,21 @@ export function DesignDetail() {
       {regenerateError && (
         <p className="text-xs text-destructive">{regenerateError}</p>
       )}
+
+      {(() => {
+        const sealed = sealedMagnetPauseHeightMm(design);
+        if (!sealed) return null;
+        return (
+          <div className="rounded-sm border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sm">
+            <p className="font-medium">Print-in-place magnet{sealed.count > 1 ? "s" : ""}</p>
+            <p className="text-muted-foreground">
+              Pause the print at <span className="font-mono">Z = {sealed.pauseHeightMm.toFixed(2)}mm</span>, drop
+              the magnet{sealed.count > 1 ? "s" : ""} in, then resume -- the print seals{" "}
+              {sealed.count > 1 ? "them" : "it"} in from there.
+            </p>
+          </div>
+        );
+      })()}
 
       {design.status === "queued" && (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">

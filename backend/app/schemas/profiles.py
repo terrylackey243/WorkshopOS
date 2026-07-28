@@ -4,7 +4,7 @@ import uuid
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .base import ORMModel
 
@@ -61,14 +61,28 @@ class PrinterProfileRead(ORMModel):
 # --- Magnet --------------------------------------------------------------------
 
 
+def _check_seal_cap(fit_type: str | None, seal_cap_mm: Decimal | None) -> None:
+    if fit_type == "sealed" and seal_cap_mm is None:
+        raise ValueError('seal_cap_mm is required when fit_type is "sealed".')
+    if fit_type is not None and fit_type != "sealed" and seal_cap_mm is not None:
+        raise ValueError('seal_cap_mm can only be set when fit_type is "sealed".')
+
+
 class MagnetProfileCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     diameter_mm: Decimal = Field(gt=0)
     thickness_mm: Decimal = Field(gt=0)
     diameter_clearance_mm: Decimal = Field(default=Decimal("0.2"), ge=0)
     depth_clearance_mm: Decimal = Field(default=Decimal("0.2"), ge=0)
-    fit_type: Literal["press", "snug", "glue", "loose"] = "glue"
+    fit_type: Literal["press", "glue", "sealed"] = "glue"
+    # Required exactly when fit_type == "sealed" -- see _check_seal_cap.
+    seal_cap_mm: Decimal | None = Field(default=None, gt=0)
     is_default: bool = False
+
+    @model_validator(mode="after")
+    def _validate_seal_cap(self) -> "MagnetProfileCreate":
+        _check_seal_cap(self.fit_type, self.seal_cap_mm)
+        return self
 
 
 class MagnetProfileUpdate(ProfileUpdateBase):
@@ -76,7 +90,19 @@ class MagnetProfileUpdate(ProfileUpdateBase):
     thickness_mm: Decimal | None = Field(default=None, gt=0)
     diameter_clearance_mm: Decimal | None = Field(default=None, ge=0)
     depth_clearance_mm: Decimal | None = Field(default=None, ge=0)
-    fit_type: Literal["press", "snug", "glue", "loose"] | None = None
+    fit_type: Literal["press", "glue", "sealed"] | None = None
+    seal_cap_mm: Decimal | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_seal_cap(self) -> "MagnetProfileUpdate":
+        # Partial update -- only enforced when *this* payload actually
+        # touches fit_type, since we don't have the row's current value
+        # here. The ProfileCrudTab edit form always submits every field
+        # together (see DesignFormFields/ProfileCrudTab), so in practice
+        # fit_type is always present when seal_cap_mm changes meaning.
+        if "fit_type" in self.model_fields_set:
+            _check_seal_cap(self.fit_type, self.seal_cap_mm)
+        return self
 
 
 class MagnetProfileRead(ORMModel):
@@ -88,6 +114,7 @@ class MagnetProfileRead(ORMModel):
     diameter_clearance_mm: Decimal
     depth_clearance_mm: Decimal
     fit_type: str
+    seal_cap_mm: Decimal | None
     is_default: bool
 
 

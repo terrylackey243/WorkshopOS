@@ -217,6 +217,7 @@ export interface MagnetProfile {
   diameter_clearance_mm: number;
   depth_clearance_mm: number;
   fit_type: string;
+  seal_cap_mm: number | null;
   is_default: boolean;
   created_at: string;
   updated_at: string;

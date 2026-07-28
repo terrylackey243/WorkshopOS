@@ -328,6 +328,54 @@ async def test_update_unknown_design_returns_404(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+async def test_design_with_sealed_magnet_generates_successfully(client: AsyncClient, tmp_path, monkeypatch) -> None:
+    """End-to-end: a "sealed" (print-in-place) magnet profile's seal_cap_mm
+    must flow all the way through build_label_parameters -> the geometry
+    engine's capped-pocket path -> a real generated STL, not just pass
+    schema validation."""
+    data = await register_org(client)
+    headers = auth_headers(data["access_token"])
+    org_id = data["organization_id"]
+
+    magnet_resp = await client.post(
+        f"/organizations/{org_id}/profiles/magnets",
+        json={
+            "name": "Sealed 6x2.5mm",
+            "diameter_mm": "6",
+            "thickness_mm": "2.5",
+            "fit_type": "sealed",
+            "seal_cap_mm": "0.6",
+        },
+        headers=headers,
+    )
+    assert magnet_resp.status_code == 201, magnet_resp.text
+    magnet_id = magnet_resp.json()["id"]
+
+    label_resp = await client.post(
+        f"/organizations/{org_id}/profiles/label-styles",
+        json={"name": "Sealed Style", "default_magnet_profile_id": magnet_id},
+        headers=headers,
+    )
+    assert label_resp.status_code == 201, label_resp.text
+    label_style_id = label_resp.json()["id"]
+
+    create_resp = await client.post(
+        f"/organizations/{org_id}/designs",
+        json={"name": "Sealed Label", "text": "Wrenches", "label_style_profile_id": label_style_id},
+        headers=headers,
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    assert create_resp.json()["parameters_json"]["magnets"]["seal_cap_mm"] == 0.6
+    design_id = create_resp.json()["id"]
+
+    monkeypatch.setattr(worker_tasks.settings, "generated_files_dir", str(tmp_path))
+    await worker_tasks._generate_design(design_id)
+
+    get_resp = await client.get(f"/organizations/{org_id}/designs/{design_id}", headers=headers)
+    assert get_resp.json()["status"] == "generated"
+    assert get_resp.json()["error_message"] is None
+
+
 async def test_design_create_rejects_unknown_tool_id(client: AsyncClient) -> None:
     data = await register_org(client)
     headers = auth_headers(data["access_token"])

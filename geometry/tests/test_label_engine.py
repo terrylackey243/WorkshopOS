@@ -17,6 +17,36 @@ def test_bodies_watertight():
     model=generate_label(params())
     assert model.outline_body.is_watertight and model.text_body.is_watertight
 
+def test_sealed_pocket_shifts_cavity_up_and_shrinks_skin():
+    """seal_cap_mm>0 (the print-in-place "sealed" fit type) must move the
+    cavity up by exactly that much, leaving room for a solid cap below
+    z=0 -- the opposite side from the unsealed case's open recess."""
+    p=LabelParameters(text="Wrenches",magnets=MagnetPocketParameters(seal_cap_mm=1.0))
+    metrics=calculate_metrics(p)
+    assert all(pocket.seal_cap_mm==pytest.approx(1.0) for pocket in metrics.magnet_pockets)
+    assert all(pocket.remaining_top_skin_mm==pytest.approx(1.05) for pocket in metrics.magnet_pockets)
+    model=generate_label(p)
+    for tool in model.magnet_tools:
+        assert tool.bounds[0][2]==pytest.approx(1.0,abs=0.01)
+        assert tool.bounds[1][2]==pytest.approx(3.5,abs=0.01)
+
+def test_sealed_pocket_caps_the_opening_with_solid_material():
+    """The whole point of seal_cap_mm: unlike the default open recess,
+    there must actually be solid outline material directly over the
+    pocket (z in [0, seal_cap_mm)), not empty space -- otherwise pausing
+    and resuming a print wouldn't actually seal the magnet in."""
+    p=LabelParameters(text="Wrenches",magnets=MagnetPocketParameters(seal_cap_mm=1.0))
+    model=generate_label(p)
+    assert model.outline_body.is_watertight and model.text_body.is_watertight
+    pocket=model.metrics.magnet_pockets[0]
+    point=[[pocket.x_mm,pocket.y_mm,0.5]]
+    assert model.outline_body.contains(point)[0]
+
+def test_sealed_pocket_rejects_cap_plus_depth_exceeding_body():
+    p=LabelParameters(text="Wrenches",body_depth_mm=3.0,magnets=MagnetPocketParameters(depth_clearance_mm=0.2,thickness_mm=2.3,seal_cap_mm=0.6))
+    with pytest.raises(ValueError,match="leave material above the pocket"):
+        calculate_metrics(p)
+
 def _outline_component_count(mesh):
     """Connected-component count over face adjacency via plain union-find --
     trimesh's own `mesh.split()` needs scipy or networkx, neither of which

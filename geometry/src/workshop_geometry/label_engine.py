@@ -32,6 +32,13 @@ class MagnetPocketParameters:
     edge_offset_mm: float=8.0
     minimum_bridge_mm: float=0.6
     support_extra_mm: float=0.0
+    # >0 for a "sealed"/print-in-place magnet: leaves this much solid
+    # material printed *over* the pocket's opening (on top of the magnet,
+    # once it's dropped in mid-print) instead of leaving the pocket open for
+    # gluing afterward. 0.0 (the default) reproduces the original
+    # open-recess behavior exactly -- every existing magnet profile has this
+    # implicitly, so nothing about their generated geometry changes.
+    seal_cap_mm: float=0.0
     @property
     def pocket_diameter_mm(self): return self.diameter_mm+self.diameter_clearance_mm
     @property
@@ -40,7 +47,8 @@ class MagnetPocketParameters:
     def support_diameter_mm(self): return self.pocket_diameter_mm+2*self.minimum_bridge_mm+self.support_extra_mm
     def validate(self,body_depth_mm):
         if self.count<0 or self.count>8: raise ValueError("Magnet count must be between 0 and 8.")
-        if self.pocket_depth_mm>=body_depth_mm: raise ValueError("Magnet pocket depth must leave material above the pocket.")
+        if self.seal_cap_mm<0: raise ValueError("Seal cap thickness cannot be negative.")
+        if self.pocket_depth_mm+self.seal_cap_mm>=body_depth_mm: raise ValueError("Magnet pocket depth (plus seal cap) must leave material above the pocket.")
 
 @dataclass(frozen=True)
 class LabelParameters:
@@ -71,6 +79,7 @@ class MagnetPocket:
     depth_mm: float
     support_diameter_mm: float
     remaining_top_skin_mm: float
+    seal_cap_mm: float
 
 @dataclass(frozen=True)
 class LabelMetrics:
@@ -304,8 +313,8 @@ def calculate_metrics(p):
         left=minx+m.edge_offset_mm+sr; right=maxx-m.edge_offset_mm-sr
         if right<left: raise ValueError("Label is too narrow for the requested magnet supports.")
         xs=[(left+right)/2] if m.count==1 else np.linspace(left,right,m.count).tolist()
-        skin=p.body_depth_mm-m.pocket_depth_mm
-        pockets=[MagnetPocket(round(float(x),3),round(float(cy),3),round(m.pocket_diameter_mm,3),round(m.pocket_depth_mm,3),round(m.support_diameter_mm,3),round(skin,3)) for x in xs]
+        skin=p.body_depth_mm-m.pocket_depth_mm-m.seal_cap_mm
+        pockets=[MagnetPocket(round(float(x),3),round(float(cy),3),round(m.pocket_diameter_mm,3),round(m.pocket_depth_mm,3),round(m.support_diameter_mm,3),round(skin,3),round(m.seal_cap_mm,3)) for x in xs]
     return LabelMetrics(round(width,3),round(th+2*p.outline_offset_mm,3),round(p.body_depth_mm,3),round(tw,3),round(th,3),round(p.outline_offset_mm,3),fp,tuple(pockets))
 
 def generate_label(p):
@@ -327,12 +336,19 @@ def generate_label(p):
     if p.qr_url:
         qr_body=_qr_body(p.qr_url,p.body_depth_mm)
     if not metrics.magnet_pockets: return LabelModel(p,metrics,outline,text_body,[],qr_body)
-    supports=[]; pockets=[]
+    supports=[]; pockets=[]; caps=[]
     for pocket in metrics.magnet_pockets:
-        supports.append(_cylinder(pocket.support_diameter_mm,pocket.depth_mm,pocket.x_mm,pocket.y_mm,0.0))
-        pockets.append(_cylinder(pocket.diameter_mm,pocket.depth_mm,pocket.x_mm,pocket.y_mm,0.0))
-    text_body=_difference(text_body,supports,"face_up_text")
-    outline=_union([outline,*supports],"text_outline_with_bottom_magnet_supports")
+        # Shifted up by seal_cap_mm (0 for every existing/non-sealed magnet
+        # profile, reproducing the original z=0-opening geometry exactly).
+        # A >0 seal_cap_mm leaves that much solid material below z=0 up to
+        # zmin -- see `caps` below -- printed over the pocket once the
+        # magnet is dropped in mid-print.
+        supports.append(_cylinder(pocket.support_diameter_mm,pocket.depth_mm,pocket.x_mm,pocket.y_mm,pocket.seal_cap_mm))
+        pockets.append(_cylinder(pocket.diameter_mm,pocket.depth_mm,pocket.x_mm,pocket.y_mm,pocket.seal_cap_mm))
+        if pocket.seal_cap_mm>0:
+            caps.append(_cylinder(pocket.support_diameter_mm,pocket.seal_cap_mm,pocket.x_mm,pocket.y_mm,0.0))
+    text_body=_difference(text_body,[*supports,*caps],"face_up_text")
+    outline=_union([outline,*supports,*caps],"text_outline_with_bottom_magnet_supports")
     outline=_difference(outline,pockets,"text_outline_with_bottom_magnet_supports")
     return LabelModel(p,metrics,outline,text_body,pockets,qr_body)
 

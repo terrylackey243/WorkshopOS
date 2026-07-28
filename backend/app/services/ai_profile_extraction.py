@@ -86,7 +86,7 @@ PROFILE_TYPE_SPECS: dict[str, tuple[type, list[FieldSpec]]] = {
                 "enum",
                 convert=False,
                 required=False,
-                enum_values=("press", "snug", "glue", "loose"),
+                enum_values=("press", "glue", "sealed"),
             ),
         ],
     ),

@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -23,8 +24,10 @@ import {
   drawerProfileSchema,
   labelStyleDefaultValues,
   labelStyleSchema,
+  MAGNET_FIT_TYPE_DEFAULTS,
   magnetDefaultValues,
   magnetSchema,
+  type MagnetFormValues,
   materialDefaultValues,
   materialSchema,
   printerDefaultValues,
@@ -81,6 +84,12 @@ function PrintersTab() {
 // Magnets
 // ---------------------------------------------------------------------------
 
+const FIT_TYPE_LABELS: Record<MagnetFormValues["fit_type"], string> = {
+  press: "Press-fit (tighter)",
+  glue: "Glue (open recess)",
+  sealed: "Sealed (print-in-place)",
+};
+
 function MagnetsTab() {
   return (
     <ProfileCrudTab
@@ -89,24 +98,67 @@ function MagnetsTab() {
       api={magnetProfilesApi}
       schema={magnetSchema}
       defaultValues={magnetDefaultValues}
+      toEditValues={(row) => ({
+        name: row.name,
+        diameter_mm: row.diameter_mm,
+        thickness_mm: row.thickness_mm,
+        diameter_clearance_mm: row.diameter_clearance_mm,
+        depth_clearance_mm: row.depth_clearance_mm,
+        fit_type: row.fit_type as MagnetFormValues["fit_type"],
+        seal_cap_mm: row.seal_cap_mm ?? undefined,
+      })}
       columns={[
         { key: "size", label: "Size (mm)", format: (r) => `⌀${r.diameter_mm} × ${r.thickness_mm}`, mono: true },
-        { key: "fit_type", label: "Fit" },
+        { key: "fit_type", label: "Fit", format: (r) => FIT_TYPE_LABELS[r.fit_type as MagnetFormValues["fit_type"]] ?? r.fit_type },
       ]}
-      renderFields={(form) => (
-        <>
-          <TextField form={form} name="name" label="Name" />
-          <FieldRow>
-            <NumberField form={form} name="diameter_mm" label="Diameter (mm)" step="0.1" />
-            <NumberField form={form} name="thickness_mm" label="Thickness (mm)" step="0.1" />
-          </FieldRow>
-          <FieldRow>
-            <NumberField form={form} name="diameter_clearance_mm" label="Diameter clearance (mm)" step="0.05" />
-            <NumberField form={form} name="depth_clearance_mm" label="Depth clearance (mm)" step="0.05" />
-          </FieldRow>
-          <TextField form={form} name="fit_type" label="Fit type" placeholder="glue" />
-        </>
-      )}
+      renderFields={(form) => {
+        const fitType = form.watch("fit_type") as MagnetFormValues["fit_type"];
+        return (
+          <>
+            <TextField form={form} name="name" label="Name" />
+            <FieldRow>
+              <NumberField form={form} name="diameter_mm" label="Diameter (mm)" step="0.1" />
+              <NumberField form={form} name="thickness_mm" label="Thickness (mm)" step="0.1" />
+            </FieldRow>
+            <FieldRow>
+              <NumberField form={form} name="diameter_clearance_mm" label="Diameter clearance (mm)" step="0.05" />
+              <NumberField form={form} name="depth_clearance_mm" label="Depth clearance (mm)" step="0.05" />
+            </FieldRow>
+            <div className="flex flex-col gap-1">
+              <Label>Fit type</Label>
+              <Select
+                value={fitType}
+                onValueChange={(v) => {
+                  const fit = v as MagnetFormValues["fit_type"];
+                  const defaults = MAGNET_FIT_TYPE_DEFAULTS[fit];
+                  form.setValue("fit_type", fit, { shouldValidate: true });
+                  form.setValue("diameter_clearance_mm", defaults.diameter_clearance_mm, { shouldValidate: true });
+                  form.setValue("seal_cap_mm", defaults.seal_cap_mm, { shouldValidate: true });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(FIT_TYPE_LABELS) as MagnetFormValues["fit_type"][]).map((fit) => (
+                    <SelectItem key={fit} value={fit}>
+                      {FIT_TYPE_LABELS[fit]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {fitType === "sealed" && (
+              <NumberField
+                form={form}
+                name="seal_cap_mm"
+                label="Seal cap thickness (mm) — printed over the magnet after it's inserted mid-print"
+                step="0.1"
+              />
+            )}
+          </>
+        );
+      }}
     />
   );
 }
