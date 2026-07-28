@@ -22,12 +22,17 @@ import { ShopNew } from "@/pages/shops/ShopNew";
 import { ShopsIndex } from "@/pages/shops/ShopsIndex";
 import { ShopsSection } from "@/pages/shops/ShopsSection";
 import { ToolboxDetail } from "@/pages/toolboxes/ToolboxDetail";
+import { ToolboxPrintSheet } from "@/pages/toolboxes/ToolboxPrintSheet";
 import { ToolDetail } from "@/pages/tools/ToolDetail";
 import { ToolsPage } from "@/pages/tools/ToolsPage";
 
 const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   { path: "/register", element: <RegisterPage /> },
+  {
+    path: "/shops/:shopId/toolboxes/:toolboxId/print",
+    element: <ToolboxPrintSheet />,
+  },
   {
     path: "/",
     element: <AppShell />,

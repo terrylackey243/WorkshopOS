@@ -1,7 +1,7 @@
 import * as React from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Printer, Trash2 } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { z } from "zod";
@@ -337,6 +337,14 @@ export function ToolboxDetail() {
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold">Layout</h2>
+          {toolboxLayout.rows.length > 0 && (
+            <Button size="sm" variant="outline" asChild>
+              <Link to={`/shops/${shopId}/toolboxes/${toolboxId}/print`} target="_blank">
+                <Printer />
+                Print inventory sheet
+              </Link>
+            </Button>
+          )}
         </div>
 
         {toolboxLayout.rows.length === 0 ? (
