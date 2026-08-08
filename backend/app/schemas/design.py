@@ -37,6 +37,7 @@ class DesignRead(ORMModel):
     outline_stl_path: str | None
     text_stl_path: str | None
     qr_stl_path: str | None
+    threemf_path: str | None
     generated_at: datetime | None
     created_at: datetime
     updated_at: datetime

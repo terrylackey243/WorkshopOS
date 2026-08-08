@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import io
 import shutil
 import uuid
+import zipfile
 from pathlib import Path
 from typing import Literal
 
@@ -146,7 +148,7 @@ async def list_designs(
     session: AsyncSession = Depends(get_session),
 ) -> list[Design]:
     rows = await session.scalars(
-        select(Design).where(Design.organization_id == organization_id).order_by(Design.created_at.desc())
+        select(Design).where(Design.organization_id == organization_id).order_by(Design.name)
     )
     return list(rows)
 
@@ -309,14 +311,60 @@ _FILE_PATHS = {
     "outline": lambda d: d.outline_stl_path,
     "text": lambda d: d.text_stl_path,
     "qr": lambda d: d.qr_stl_path,
+    "3mf": lambda d: d.threemf_path,
 }
+_FILE_MEDIA_TYPES = {"outline": "model/stl", "text": "model/stl", "qr": "model/stl", "3mf": "model/3mf"}
+_FILE_NAMES = {"outline": "outline.stl", "text": "text.stl", "qr": "qr.stl", "3mf": "label.3mf"}
+
+
+@router.get("/{design_id}/files/stl-bundle")
+async def get_design_stl_bundle(
+    organization_id: uuid.UUID,
+    design_id: uuid.UUID,
+    membership: Membership = Depends(get_current_membership),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Zips the outline+text STL pair together for a single download --
+    unlike the 3MF, these stay as two separate .stl files inside the
+    archive (not merged into one mesh), for anything that specifically
+    wants raw STL rather than 3MF. Declared before the `{kind}` route
+    below so this static path takes precedence over that dynamic one
+    (which would otherwise 422 on an unrecognized `kind`).
+
+    Just copies the already-generated files' bytes as-is into the zip --
+    no mesh re-parsing at all, so none of the STL-round-trip corruption
+    risk that motivated building the 3MF from in-memory geometry (see
+    export_label's threemf_path) applies here.
+    """
+    design = await _get_design(session, organization_id, design_id)
+    if design.status != "generated" or not design.outline_stl_path or not design.text_stl_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generated file not available yet.")
+
+    outline_path = Path(design.outline_stl_path)
+    text_path = Path(design.text_stl_path)
+    if not outline_path.is_file() or not text_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Generated file not available yet.")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(outline_path, arcname="outline.stl")
+        zf.write(text_path, arcname="text.stl")
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="label-stls.zip"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/{design_id}/files/{kind}")
 async def get_design_file(
     organization_id: uuid.UUID,
     design_id: uuid.UUID,
-    kind: Literal["outline", "text", "qr"],
+    kind: Literal["outline", "text", "qr", "3mf"],
     membership: Membership = Depends(get_current_membership),
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
@@ -337,5 +385,5 @@ async def get_design_file(
     # fetch every time so the preview/download always reflects the current
     # generation, at the cost of re-downloading an unchanged file.
     return FileResponse(
-        path, media_type="model/stl", filename=f"{kind}.stl", headers={"Cache-Control": "no-store"}
+        path, media_type=_FILE_MEDIA_TYPES[kind], filename=_FILE_NAMES[kind], headers={"Cache-Control": "no-store"}
     )

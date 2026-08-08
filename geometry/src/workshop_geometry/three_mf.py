@@ -1,8 +1,10 @@
 from __future__ import annotations
-import json, math, zipfile
+import io, json, math, zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+import trimesh
 
 @dataclass(frozen=True)
 class Bounds3D:
@@ -72,3 +74,113 @@ def inspect_3mf(path:str|Path)->ThreeMFReport:
 
 def report_to_dict(report): return asdict(report)
 def write_json_report(report,path): Path(path).write_text(json.dumps(report_to_dict(report),indent=2)+"\n",encoding="utf-8")
+
+# --- Colored multi-body export -----------------------------------------------
+#
+# 3MF Core Specification namespace. `basematerials` (and the `pid`/`pindex`
+# attributes objects use to reference a color within it) are part of the
+# *core* spec, not a material extension -- no separate namespace needed.
+_MODEL_NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+_RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+
+def _q(tag: str, ns: str = _MODEL_NS) -> str:
+    """Clark-notation qualified tag (`{ns}tag`) -- paired with
+    `ET.register_namespace("", _MODEL_NS)` in `export_colored_3mf`, this
+    makes ElementTree serialize every core-namespace element with a bare
+    `xmlns="..."` default namespace and no prefix, matching how real-world
+    3MF files (and every slicer's own writer) are actually formatted."""
+    return f"{{{ns}}}{tag}"
+
+def export_colored_3mf(bodies: list[tuple[trimesh.Trimesh, str, str]], include_colors: bool = True) -> bytes:
+    """Combine multiple trimesh bodies into a single 3MF file.
+
+    `bodies` is `[(mesh, object_name, hex_color), ...]`, e.g.
+    `[(outline_body, "outline", "#9ca3af"), (text_body, "text", "#22c55e")]`.
+    Every body is written with an identity transform (no repositioning) --
+    correct here because label bodies are already co-located in one shared
+    coordinate frame by `generate_label()`, the same reason the browser
+    preview overlays their STLs directly with no transform of its own.
+
+    With `include_colors=True` (the default), each object's color is baked
+    in via a `<basematerials>` resource + `pid`/`pindex`, so a slicer
+    (Bambu Studio, PrusaSlicer, OrcaSlicer) auto-assigns a filament/color
+    per object on import instead of requiring the user to manually recolor
+    each part. `include_colors=False` skips all of that, writing bare,
+    uncolored geometry only -- confirmed (empirically, against a real
+    third-party slicer with an unusually strict/limited 3MF reader) to be
+    the more broadly-compatible option: some slicers reject `basematerials`
+    outright even though it's core-spec, not an extension. Every color in
+    `bodies` is still required for API consistency even when unused, so
+    swapping `include_colors` doesn't change the call site.
+
+    Hand-rolled rather than trimesh's own `export_3MF`: that exporter
+    writes valid multi-object 3MF (each body as its own `<object>`/`<item>`,
+    correctly positioned) but has no support for `<basematerials>` or the
+    `pid`/`pindex` attributes an object needs to reference a color -- see
+    trimesh/exchange/threemf.py. This only implements the minimal subset of
+    the 3MF core spec every mainstream slicer actually reads for
+    color-per-object, confirmed structurally valid in this package's test
+    suite by round-tripping through both `inspect_3mf` above and trimesh's
+    own (unrelated, color-blind) 3MF *importer*.
+    """
+    ET.register_namespace("", _MODEL_NS)
+    model = ET.Element(_q("model"), {"unit": "millimeter"})
+    resources = ET.SubElement(model, _q("resources"))
+
+    if include_colors:
+        basematerials = ET.SubElement(resources, _q("basematerials"), {"id": "1"})
+        for _, name, hex_color in bodies:
+            rgb = hex_color.lstrip("#").upper()
+            ET.SubElement(basematerials, _q("base"), {"name": name, "displaycolor": f"#{rgb}FF"})
+
+    build = ET.SubElement(model, _q("build"))
+    for index, (mesh, name, _) in enumerate(bodies):
+        object_id = index + 2  # id 1 is already taken by the basematerials resource (if present)
+        attribs = {"id": str(object_id), "name": name, "type": "model"}
+        if include_colors:
+            attribs["pid"] = "1"
+            attribs["pindex"] = str(index)
+        obj = ET.SubElement(resources, _q("object"), attribs)
+        mesh_el = ET.SubElement(obj, _q("mesh"))
+        vertices_el = ET.SubElement(mesh_el, _q("vertices"))
+        for x, y, z in mesh.vertices:
+            ET.SubElement(vertices_el, _q("vertex"), {"x": f"{x:.6f}", "y": f"{y:.6f}", "z": f"{z:.6f}"})
+        triangles_el = ET.SubElement(mesh_el, _q("triangles"))
+        for a, b, c in mesh.faces:
+            ET.SubElement(triangles_el, _q("triangle"), {"v1": str(int(a)), "v2": str(int(b)), "v3": str(int(c))})
+        ET.SubElement(build, _q("item"), {"objectid": str(object_id)})
+
+    model_xml = b'<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(model, encoding="utf-8")
+
+    rels = ET.Element(_q("Relationships", _RELS_NS))
+    ET.SubElement(
+        rels,
+        _q("Relationship", _RELS_NS),
+        {
+            "Id": "rel0",
+            "Type": "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel",
+            "Target": "/3D/3dmodel.model",
+        },
+    )
+    rels_xml = b'<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(rels, encoding="utf-8")
+
+    content_types = ET.Element(_q("Types", _CONTENT_TYPES_NS))
+    ET.SubElement(
+        content_types,
+        _q("Default", _CONTENT_TYPES_NS),
+        {"Extension": "rels", "ContentType": "application/vnd.openxmlformats-package.relationships+xml"},
+    )
+    ET.SubElement(
+        content_types,
+        _q("Default", _CONTENT_TYPES_NS),
+        {"Extension": "model", "ContentType": "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"},
+    )
+    content_types_xml = b'<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(content_types, encoding="utf-8")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("_rels/.rels", rels_xml)
+        zf.writestr("3D/3dmodel.model", model_xml)
+    return buffer.getvalue()

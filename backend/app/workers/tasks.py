@@ -62,6 +62,7 @@ async def _generate_design(design_id: str) -> None:
             design.outline_stl_path = str(paths["outline"])
             design.text_stl_path = str(paths["text"])
             design.qr_stl_path = str(paths["qr"]) if "qr" in paths else None
+            design.threemf_path = str(paths["3mf"])
             design.generated_at = datetime.now(timezone.utc)
             design.error_message = None
             logger.info(
@@ -70,6 +71,7 @@ async def _generate_design(design_id: str) -> None:
                 outline_stl_path=design.outline_stl_path,
                 text_stl_path=design.text_stl_path,
                 qr_stl_path=design.qr_stl_path,
+                threemf_path=design.threemf_path,
             )
         except Exception as exc:  # noqa: BLE001 -- worker boundary must not crash the process
             logger.exception("generate_design_failed", design_id=design_id)

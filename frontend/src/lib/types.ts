@@ -286,6 +286,7 @@ export interface Design {
   outline_stl_path: string | null;
   text_stl_path: string | null;
   qr_stl_path: string | null;
+  threemf_path: string | null;
   generated_at: string | null;
   error_message: string | null;
   created_at: string;

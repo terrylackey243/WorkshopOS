@@ -1,5 +1,9 @@
+from xml.etree import ElementTree as ET
+
+import numpy as np
 import pytest
-from workshop_geometry.label_engine import LabelParameters,MagnetPocketParameters,QR_SIZE_MM,calculate_metrics,generate_label,generation_manifest
+import trimesh
+from workshop_geometry.label_engine import LabelParameters,MagnetPocketParameters,QR_SIZE_MM,calculate_metrics,export_label,generate_label,generation_manifest
 
 def params(): return LabelParameters(text="Wrenches",magnets=MagnetPocketParameters())
 
@@ -41,6 +45,96 @@ def test_sealed_pocket_caps_the_opening_with_solid_material():
     pocket=model.metrics.magnet_pockets[0]
     point=[[pocket.x_mm,pocket.y_mm,0.5]]
     assert model.outline_body.contains(point)[0]
+
+def test_sealed_pocket_top_slab_is_single_color_outline():
+    """The whole point of the global-cap design (vs. a small per-magnet
+    patch): the top seal_cap_mm slab must be entirely outline material
+    across the FULL label footprint, including wherever the text glyphs
+    themselves are -- not just directly over each magnet hole -- so a real
+    print never needs to swap filament color for the layers printed after
+    the pause. Regression test for direct feedback from an actual print:
+    color-swapping through that region was leaving an extra seam right on
+    the surface that ends up pressed against the toolbox."""
+    p=LabelParameters(text="Wrenches",magnets=MagnetPocketParameters(seal_cap_mm=1.0))
+    model=generate_label(p)
+    assert model.text_body.bounds[0][2]==pytest.approx(1.0,abs=0.01)
+    assert model.text_body.bounds[1][2]==pytest.approx(p.body_depth_mm,abs=0.01)
+
+    from workshop_geometry.label_engine import _text_geometry
+    text_shape,_=_text_geometry(p)
+    interior=text_shape.representative_point()
+    point=[[interior.x,interior.y,0.5]]
+    assert model.outline_body.contains(point)[0]
+    assert not model.text_body.contains(point)[0]
+
+@pytest.mark.parametrize(
+    "minimum_width_mm,expected_count",
+    [
+        (100, 2),      # under 6in (152.4mm) -- stays at the configured default of 2
+        (152.4, 3),    # exactly 6in -- bumps to a 3rd magnet
+        (228.6, 4),    # exactly 9in (6in + 3in) -- a 4th
+        (304.8, 5),    # exactly 12in (6in + 2*3in) -- a 5th
+    ],
+)
+def test_long_labels_get_more_magnets_automatically(minimum_width_mm, expected_count):
+    """Longer labels sag/curl off a metal surface with only 2 magnets --
+    every additional 3in past the first 6in needs one more. Uses
+    minimum_width_mm to force calculate_metrics()'s `width` to an exact,
+    predictable value (magnet placement itself still derives from the
+    text's own real bounds, unaffected by minimum_width_mm -- only the
+    length-based magnet-count *decision* cares about `width`)."""
+    p = LabelParameters(text="Wrenches", minimum_width_mm=minimum_width_mm, magnets=MagnetPocketParameters())
+    metrics = calculate_metrics(p)
+    assert len(metrics.magnet_pockets) == expected_count
+
+def test_explicit_higher_magnet_count_is_never_reduced_for_a_short_label():
+    p = LabelParameters(text="Wrenches", magnets=MagnetPocketParameters(count=6))
+    metrics = calculate_metrics(p)
+    assert len(metrics.magnet_pockets) == 6
+
+def test_magnets_disabled_stay_disabled_regardless_of_length():
+    p = LabelParameters(text="Wrenches", minimum_width_mm=300, magnets=MagnetPocketParameters(count=0))
+    metrics = calculate_metrics(p)
+    assert len(metrics.magnet_pockets) == 0
+
+def test_export_label_3mf_bodies_are_watertight(tmp_path):
+    """Regression test for a real bug: re-loading the outline/text STL
+    files back off disk to build the combined 3MF was confirmed (via a
+    slicer that rejected the result, independently reproduced here) to
+    silently introduce duplicate reversed-winding faces from STL's lossy
+    32-bit floats, breaking manifoldness for a mesh that was provably
+    watertight beforehand -- specifically reproducible with a sealed
+    (seal_cap_mm>0) magnet pocket, which is why this uses one rather than
+    the plain default. `export_label`'s 3MF must be built from the
+    in-memory CSG result directly (see label_engine.py), not from a
+    round-tripped STL reload, so every object in it comes out watertight."""
+    p = LabelParameters(
+        text="Screwdrivers",
+        magnets=MagnetPocketParameters(count=3, seal_cap_mm=0.6),
+    )
+    model = generate_label(p)
+    paths = export_label(model, tmp_path, "label")
+
+    from zipfile import ZipFile
+    ns = "{http://schemas.microsoft.com/3dmanufacturing/core/2015/02}"
+    with ZipFile(paths["3mf"]) as z:
+        root = ET.fromstring(z.read("3D/3dmodel.model"))
+
+    objects = root.findall(f"{ns}resources/{ns}object")
+    assert len(objects) == 2
+    for obj in objects:
+        mesh_el = obj.find(f"{ns}mesh")
+        vertices = [
+            [float(v.attrib["x"]), float(v.attrib["y"]), float(v.attrib["z"])]
+            for v in mesh_el.find(f"{ns}vertices").findall(f"{ns}vertex")
+        ]
+        faces = [
+            [int(t.attrib["v1"]), int(t.attrib["v2"]), int(t.attrib["v3"])]
+            for t in mesh_el.find(f"{ns}triangles").findall(f"{ns}triangle")
+        ]
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+        assert mesh.is_watertight, f"{obj.attrib['name']} object is not watertight"
+        assert mesh.is_winding_consistent, f"{obj.attrib['name']} object has inconsistent winding"
 
 def test_sealed_pocket_rejects_cap_plus_depth_exceeding_body():
     p=LabelParameters(text="Wrenches",body_depth_mm=3.0,magnets=MagnetPocketParameters(depth_clearance_mm=0.2,thickness_mm=2.3,seal_cap_mm=0.6))

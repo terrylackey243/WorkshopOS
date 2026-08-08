@@ -425,11 +425,23 @@ export const designsApi = {
  */
 export function fetchDesignFile(
   designId: string,
-  kind: "outline" | "text" | "qr",
+  kind: "outline" | "text" | "qr" | "3mf",
   contentHash?: string,
 ): Promise<Blob> {
   return http
     .get<Blob>(orgPath(`/designs/${designId}/files/${kind}`), {
+      responseType: "blob",
+      params: contentHash ? { v: contentHash } : undefined,
+    })
+    .then((r) => r.data);
+}
+
+/** Both STL files zipped together (not merged into one mesh, unlike the
+ * 3MF) -- one download instead of two, for anything that specifically
+ * wants raw STL. Same cache-busting `?v=` pattern as fetchDesignFile. */
+export function fetchDesignStlBundle(designId: string, contentHash?: string): Promise<Blob> {
+  return http
+    .get<Blob>(orgPath(`/designs/${designId}/files/stl-bundle`), {
       responseType: "blob",
       params: contentHash ? { v: contentHash } : undefined,
     })

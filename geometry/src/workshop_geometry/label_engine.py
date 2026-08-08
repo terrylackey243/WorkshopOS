@@ -9,7 +9,24 @@ from shapely import affinity
 from shapely.geometry import LineString, MultiPolygon, Polygon
 from shapely.ops import nearest_points, unary_union
 
+from .three_mf import export_colored_3mf
+
 ENGINE_VERSION="0.5.3"
+
+# Matches the STL preview's body colors (see DesignDetail.tsx's StlPreview
+# `bodies=` call) -- kept here (unused in the 3MF export below for now,
+# see EXPORT_3MF_INCLUDE_COLORS) in case per-object color in the 3MF is
+# ever re-enabled for slicers that handle it correctly.
+OUTLINE_COLOR = "#9ca3af"
+TEXT_COLOR = "#22c55e"
+# A real, unusually strict/limited third-party slicer (bundled with a
+# specific printer brand) was confirmed to reject 3MF files containing a
+# `<basematerials>` resource outright, even though it's core-spec, not an
+# extension -- rejecting the *entire* file as having "no geometry data",
+# not just ignoring the color. Broad compatibility with whatever slicer a
+# given user has wins over auto-assigned color, so this ships off by
+# default; flip it if that tradeoff ever needs revisiting.
+EXPORT_3MF_INCLUDE_COLORS = False
 
 # Fixed physical footprint for a label's QR body -- independent of the text
 # label's own width/height (the QR is exported as its own separate STL body,
@@ -21,6 +38,34 @@ QR_SIZE_MM = 15.0
 # the rest as raised-module bump height. See _qr_body's docstring for why
 # this is a solid base + bumps, not modules extruded standalone.
 _QR_BASE_FRACTION = 0.3
+
+# A label 6in+ long sags/curls off a metal surface with only 2 magnets, so
+# a 3rd is required starting there, plus one more every additional 3in --
+# see _length_based_minimum_magnet_count. Workshop labels are specified in
+# inches by convention even though every dimension in this engine is mm.
+_MM_PER_INCH = 25.4
+_MAGNET_LENGTH_THRESHOLD_MM = 6 * _MM_PER_INCH
+_MAGNET_LENGTH_STEP_MM = 3 * _MM_PER_INCH
+# A label needing more than this is unrealistically long (8 magnets already
+# covers up to 6in + 5*3in = 21in) -- clamped rather than raised as a
+# ValueError since this is a computed *minimum*, derived after the label's
+# actual width is already known, not a value the caller set directly (the
+# 0-8 range on the caller-set MagnetPocketParameters.count is enforced by
+# validate() instead, before the width is even computed).
+_MAGNET_COUNT_CAP = 8
+
+def _length_based_minimum_magnet_count(width_mm: float) -> int:
+    """The minimum magnet count a label of this width needs to lie flat --
+    2 below 6in, 3 from 6in up to (but not including) 9in, 4 from 9in up to
+    12in, and so on. Callers combine this with whatever count the caller's
+    own MagnetPocketParameters.count specifies via `max(...)`, so an
+    explicitly-configured *higher* count is never reduced, and a label
+    style with magnets turned off entirely (count=0) is never forced back
+    on -- this only ever raises an already-nonzero count."""
+    if width_mm < _MAGNET_LENGTH_THRESHOLD_MM:
+        return 2
+    extra_steps = int((width_mm - _MAGNET_LENGTH_THRESHOLD_MM) // _MAGNET_LENGTH_STEP_MM)
+    return min(_MAGNET_COUNT_CAP, 3 + extra_steps)
 
 @dataclass(frozen=True)
 class MagnetPocketParameters:
@@ -163,13 +208,37 @@ def _hole_regions(text):
     holes=[Polygon(interior) for part in parts for interior in part.interiors]
     return unary_union(holes) if holes else None
 
+def _reference_cap_height(font_prop):
+    """The font's own cap-height (baseline to top of a flat-topped capital
+    like "H"), independent of whatever text is actually being rendered.
+
+    Fixes a real bug: scaling by the *actual rendered string's* own
+    bounding box (the previous approach) meant a string with a descender
+    (lowercase g/y/p/q/j) or a diagonal "/" -- both of which extend below
+    the baseline -- got its *entire* bounding box, descender included,
+    fit to text_height_mm. That shrinks every letterform in the string to
+    compensate, not just lets the descender hang below as expected --
+    confirmed to produce a ~20% letter-size difference between otherwise
+    identically-configured labels purely based on which letters happen to
+    appear (e.g. "Screwdrivers" vs "Electrical Supplies" at the same
+    text_height_mm). Scaling against this fixed reference instead means
+    text_height_mm consistently means cap-height for every label, and
+    descenders correctly extend past it rather than shrinking everything.
+    """
+    ref_path = TextPath((0, 0), "H", size=1.0, prop=font_prop)
+    ref_polys = [Polygon(points) for points in ref_path.to_polygons() if len(points) >= 3]
+    ref_polys = [x for x in ref_polys if x.is_valid and x.area > 0]
+    _, ref_miny, _, ref_maxy = unary_union(ref_polys).bounds
+    return ref_maxy - ref_miny
+
 def _text_geometry(p):
     fp=str(findfont(FontProperties(family=p.font_family,weight=p.font_weight,style=p.font_style),fallback_to_default=True))
-    path=TextPath((0,0),p.text,size=1.0,prop=FontProperties(fname=fp))
+    font_prop=FontProperties(fname=fp)
+    path=TextPath((0,0),p.text,size=1.0,prop=font_prop)
     polys=[Polygon(points) for points in path.to_polygons() if len(points)>=3]
     polys=[x for x in polys if x.is_valid and x.area>0]
     g=_fill_glyph_contours(polys); minx,miny,maxx,maxy=g.bounds
-    s=p.text_height_mm/(maxy-miny)
+    s=p.text_height_mm/_reference_cap_height(font_prop)
     g=affinity.scale(g,xfact=s*p.horizontal_scale,yfact=s,origin=(0,0))
     minx,miny,_,_=g.bounds
     return affinity.translate(g,xoff=-minx,yoff=-miny),fp
@@ -310,9 +379,10 @@ def calculate_metrics(p):
     pockets=[]
     if p.magnets and p.magnets.count:
         m=p.magnets; sr=m.support_diameter_mm/2; cy=(miny+maxy)/2
+        count=max(m.count,_length_based_minimum_magnet_count(width))
         left=minx+m.edge_offset_mm+sr; right=maxx-m.edge_offset_mm-sr
         if right<left: raise ValueError("Label is too narrow for the requested magnet supports.")
-        xs=[(left+right)/2] if m.count==1 else np.linspace(left,right,m.count).tolist()
+        xs=[(left+right)/2] if count==1 else np.linspace(left,right,count).tolist()
         skin=p.body_depth_mm-m.pocket_depth_mm-m.seal_cap_mm
         pockets=[MagnetPocket(round(float(x),3),round(float(cy),3),round(m.pocket_diameter_mm,3),round(m.pocket_depth_mm,3),round(m.support_diameter_mm,3),round(skin,3),round(m.seal_cap_mm,3)) for x in xs]
     return LabelMetrics(round(width,3),round(th+2*p.outline_offset_mm,3),round(p.body_depth_mm,3),round(tw,3),round(th,3),round(p.outline_offset_mm,3),fp,tuple(pockets))
@@ -326,8 +396,28 @@ def generate_label(p):
     outline=_extrude(ring,p.body_depth_mm)
     bridges=[_extrude(b,p.body_depth_mm) for b in _outline_bridges(buffered,p.outline_offset_mm)]
     if bridges: outline=_union([outline,*bridges],"text_outline")
+
+    # Global top seal cap: when sealed (seal_cap_mm>0), the top seal_cap_mm
+    # of the ENTIRE label -- not just a small patch over each magnet hole --
+    # becomes single-color outline material, and text_body stops short of
+    # it instead. A real print pauses and resumes the *whole layer* at once
+    # (see the pause-height callout on the Design Detail page), so forcing
+    # a color swap mid-layer just because the text glyph footprint is still
+    # technically present there serves no purpose once printing has to
+    # stop for the magnets anyway -- per direct feedback from an actual
+    # print, it costs a filament change and an extra seam right on the
+    # surface that ends up pressed flat against the toolbox, which wants to
+    # be as smooth as possible for a good magnetic contact.
+    seal_cap_mm = p.magnets.seal_cap_mm if (p.magnets and metrics.magnet_pockets) else 0.0
+    if seal_cap_mm>0:
+        top_cap=_extrude(text,seal_cap_mm)
+        outline=_union([outline,top_cap],"text_outline")
+        text_body=_extrude(text,p.body_depth_mm-seal_cap_mm)
+        text_body.apply_translation((0,0,seal_cap_mm))
+    else:
+        text_body=_extrude(text,p.body_depth_mm)
     outline.metadata["body_role"]="text_outline"
-    text_body=_extrude(text,p.body_depth_mm); text_body.metadata["body_role"]="face_up_text"
+    text_body.metadata["body_role"]="face_up_text"
     # Independent third body -- not positioned relative to the text/outline,
     # not combined with them, and doesn't affect calculate_metrics()'s width
     # formula. Same physical depth as the label for consistent print
@@ -336,19 +426,12 @@ def generate_label(p):
     if p.qr_url:
         qr_body=_qr_body(p.qr_url,p.body_depth_mm)
     if not metrics.magnet_pockets: return LabelModel(p,metrics,outline,text_body,[],qr_body)
-    supports=[]; pockets=[]; caps=[]
+    supports=[]; pockets=[]
     for pocket in metrics.magnet_pockets:
-        # Shifted up by seal_cap_mm (0 for every existing/non-sealed magnet
-        # profile, reproducing the original z=0-opening geometry exactly).
-        # A >0 seal_cap_mm leaves that much solid material below z=0 up to
-        # zmin -- see `caps` below -- printed over the pocket once the
-        # magnet is dropped in mid-print.
         supports.append(_cylinder(pocket.support_diameter_mm,pocket.depth_mm,pocket.x_mm,pocket.y_mm,pocket.seal_cap_mm))
         pockets.append(_cylinder(pocket.diameter_mm,pocket.depth_mm,pocket.x_mm,pocket.y_mm,pocket.seal_cap_mm))
-        if pocket.seal_cap_mm>0:
-            caps.append(_cylinder(pocket.support_diameter_mm,pocket.seal_cap_mm,pocket.x_mm,pocket.y_mm,0.0))
-    text_body=_difference(text_body,[*supports,*caps],"face_up_text")
-    outline=_union([outline,*supports,*caps],"text_outline_with_bottom_magnet_supports")
+    text_body=_difference(text_body,supports,"face_up_text")
+    outline=_union([outline,*supports],"text_outline_with_bottom_magnet_supports")
     outline=_difference(outline,pockets,"text_outline_with_bottom_magnet_supports")
     return LabelModel(p,metrics,outline,text_body,pockets,qr_body)
 
@@ -367,4 +450,18 @@ def export_label(model,output_dir,stem):
     paths={"outline":op,"text":tp,"manifest":mp}
     if model.qr_body is not None:
         qp=output/f"{safe}.qr.stl"; model.qr_body.export(qp); paths["qr"]=qp
+    # Built from `model.outline_body`/`model.text_body` directly -- the
+    # same pristine, pre-STL-export meshes just written above -- not by
+    # re-loading op/tp back off disk (STL's lossy 32-bit floats were
+    # confirmed, via this package's test suite, to silently introduce
+    # duplicate reversed-winding faces on a round-trip that break
+    # manifoldness for a mesh that was provably watertight beforehand).
+    threemf_path=output/f"{safe}.3mf"
+    threemf_path.write_bytes(
+        export_colored_3mf(
+            [(model.outline_body,"outline",OUTLINE_COLOR),(model.text_body,"text",TEXT_COLOR)],
+            include_colors=EXPORT_3MF_INCLUDE_COLORS,
+        )
+    )
+    paths["3mf"]=threemf_path
     return paths

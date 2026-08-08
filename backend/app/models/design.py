@@ -52,5 +52,13 @@ class Design(UUIDPk, Timestamped, Base):
     outline_stl_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     text_stl_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     qr_stl_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Combined, per-object-colored outline+text 3MF -- written by the worker
+    # directly from the in-memory CSG result alongside the STL pair (see
+    # workshop_geometry.label_engine.export_label), not reconstructed later
+    # from the STL files: re-loading STL's lossy 32-bit-float geometry was
+    # confirmed to silently introduce duplicate reversed-winding faces that
+    # break manifoldness, which stricter 3MF readers (e.g. some printer
+    # manufacturers' bundled slicers) reject outright.
+    threemf_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(String(2000), nullable=True)

@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { designsApi, fetchDesignFile, triggerBlobDownload } from "@/lib/api";
+import { designsApi, fetchDesignFile, fetchDesignStlBundle, triggerBlobDownload } from "@/lib/api";
 import type { Design } from "@/lib/types";
 import { designSchema, DesignLinkFields, type DesignFormValues } from "@/pages/label-designer/DesignFormFields";
 
@@ -156,6 +156,20 @@ export function DesignDetail() {
       : regenerateMutation.isError
         ? "Failed to regenerate label."
         : null;
+
+  // Generated on demand (not pre-fetched like outline/text/qr above) --
+  // unlike those, a 3MF is only ever needed for the download itself, never
+  // for the live STL preview, so there's no reason to build one on every
+  // view of a generated design.
+  const download3mfMutation = useMutation({
+    mutationFn: () => fetchDesignFile(designId as string, "3mf", design?.content_hash),
+    onSuccess: (blob) => triggerBlobDownload(blob, `${slugForFilename(design?.name ?? "label")}.3mf`),
+  });
+
+  const downloadStlBundleMutation = useMutation({
+    mutationFn: () => fetchDesignStlBundle(designId as string, design?.content_hash),
+    onSuccess: (blob) => triggerBlobDownload(blob, `${slugForFilename(design?.name ?? "label")}-stls.zip`),
+  });
 
   const [editOpen, setEditOpen] = React.useState(false);
   const [editError, setEditError] = React.useState<string | null>(null);
@@ -352,6 +366,30 @@ export function DesignDetail() {
               <Download />
               Download text.stl
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={download3mfMutation.isPending || !design.threemf_path}
+              onClick={() => download3mfMutation.mutate()}
+              title={
+                design.threemf_path
+                  ? "Outline + text combined into one file -- one import instead of two, though you'll still assign each object's color/filament in your slicer."
+                  : "Not available for this design yet -- click Regenerate to create it."
+              }
+            >
+              <Download />
+              {download3mfMutation.isPending ? "Preparing…" : "Download label.3mf"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={downloadStlBundleMutation.isPending}
+              onClick={() => downloadStlBundleMutation.mutate()}
+              title="Both STL files zipped together -- one download, still two separate .stl files inside (not merged into one mesh like the 3MF)."
+            >
+              <Download />
+              {downloadStlBundleMutation.isPending ? "Preparing…" : "Download both .stl (zip)"}
+            </Button>
             {design.tool_id && (
               <Button
                 size="sm"
@@ -366,6 +404,12 @@ export function DesignDetail() {
               </Button>
             )}
           </div>
+          {download3mfMutation.isError && (
+            <p className="text-xs text-destructive">Failed to build the .3mf file. Please try again.</p>
+          )}
+          {downloadStlBundleMutation.isError && (
+            <p className="text-xs text-destructive">Failed to build the .zip file. Please try again.</p>
+          )}
         </>
       )}
     </div>
