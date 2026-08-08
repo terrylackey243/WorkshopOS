@@ -41,6 +41,15 @@ export function DesignLinkFields({ form }: { form: UseFormReturn<DesignFormValue
   const shopsQuery = useQuery({ queryKey: ["shops"], queryFn: () => shopsApi.list() });
   const toolsQuery = useQuery({ queryKey: ["tools"], queryFn: () => toolsApi.list() });
 
+  const selectedLabelStyle = (labelStylesQuery.data ?? []).find(
+    (ls) => ls.id === form.watch("label_style_profile_id"),
+  );
+  // A label style with magnet_count===0 is adhesive-mount (see ProfilesPage's
+  // "Mount type" selector) -- the backend ignores magnet_profile_id entirely
+  // in that case (build_label_parameters), so offering the picker here would
+  // just be a dead control that silently does nothing.
+  const isAdhesive = selectedLabelStyle?.magnet_count === 0;
+
   return (
     <>
       <div className="flex flex-col gap-1">
@@ -66,24 +75,30 @@ export function DesignLinkFields({ form }: { form: UseFormReturn<DesignFormValue
           </p>
         )}
       </div>
-      <div className="flex flex-col gap-1">
-        <Label>Magnet profile</Label>
-        <Select
-          value={form.watch("magnet_profile_id")}
-          onValueChange={(v) => form.setValue("magnet_profile_id", v)}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Use label style default" />
-          </SelectTrigger>
-          <SelectContent>
-            {(magnetProfilesQuery.data ?? []).map((m) => (
-              <SelectItem key={m.id} value={m.id}>
-                {m.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
+      {isAdhesive ? (
+        <p className="text-xs text-muted-foreground">
+          This label style is adhesive (no embedded magnets) -- no magnet profile needed.
+        </p>
+      ) : (
+        <div className="flex flex-col gap-1">
+          <Label>Magnet profile</Label>
+          <Select
+            value={form.watch("magnet_profile_id")}
+            onValueChange={(v) => form.setValue("magnet_profile_id", v)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Use label style default" />
+            </SelectTrigger>
+            <SelectContent>
+              {(magnetProfilesQuery.data ?? []).map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       <div className="flex flex-col gap-1">
         <Label>Shop</Label>
         <Select value={form.watch("shop_id")} onValueChange={(v) => form.setValue("shop_id", v)}>

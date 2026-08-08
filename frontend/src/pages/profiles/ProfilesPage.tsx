@@ -195,6 +195,12 @@ function MaterialsTab() {
 // Label styles
 // ---------------------------------------------------------------------------
 
+const MOUNT_TYPE_LABELS = {
+  embedded_magnets: "Embedded magnets",
+  adhesive: "Adhesive (no magnets)",
+} as const;
+type MountType = keyof typeof MOUNT_TYPE_LABELS;
+
 function LabelStylesTab() {
   const magnetProfilesQuery = useQuery({
     queryKey: ["profiles-magnets"],
@@ -211,58 +217,96 @@ function LabelStylesTab() {
       columns={[
         { key: "font_family", label: "Font", format: (r) => `${r.font_family} (${r.font_weight}/${r.font_style})` },
         { key: "text_height_mm", label: "Text height (mm)", mono: true },
-        { key: "magnet_count", label: "Magnets", mono: true },
+        { key: "magnet_count", label: "Mount", format: (r) => (r.magnet_count === 0 ? "Adhesive" : `${r.magnet_count}+ magnets`), mono: true },
       ]}
-      renderFields={(form) => (
-        <>
-          <TextField form={form} name="name" label="Name" />
-          <FieldRow>
-            <NumberField form={form} name="text_height_mm" label="Text height (mm)" step="0.001" />
-            <NumberField form={form} name="body_depth_mm" label="Body depth (mm)" step="0.01" />
-          </FieldRow>
-          <FieldRow>
-            <NumberField form={form} name="outline_offset_mm" label="Outline offset (mm)" step="0.01" />
-            <NumberField form={form} name="horizontal_scale" label="Horizontal scale" step="0.01" />
-          </FieldRow>
-          <FieldRow>
-            <TextField form={form} name="font_family" label="Font family" />
-            <TextField form={form} name="font_weight" label="Font weight" />
-          </FieldRow>
-          <FieldRow>
-            <TextField form={form} name="font_style" label="Font style" />
-            <NumberField form={form} name="minimum_width_mm" label="Minimum width (mm)" step="0.1" />
-          </FieldRow>
-          <NumberField form={form} name="fixed_width_mm" label="Fixed width (mm, optional)" step="0.1" />
-          <FieldRow>
-            <NumberField form={form} name="magnet_count" label="Magnet count" step="1" />
-            <NumberField form={form} name="magnet_edge_offset_mm" label="Magnet edge offset (mm)" step="0.1" />
-          </FieldRow>
-          <FieldRow>
-            <NumberField form={form} name="magnet_minimum_bridge_mm" label="Magnet min. bridge (mm)" step="0.05" />
-            <NumberField form={form} name="magnet_support_extra_mm" label="Magnet support extra (mm)" step="0.05" />
-          </FieldRow>
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground">
-              Default magnet profile
-            </label>
-            <Select
-              value={form.watch("default_magnet_profile_id")}
-              onValueChange={(v) => form.setValue("default_magnet_profile_id", v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="None" />
-              </SelectTrigger>
-              <SelectContent>
-                {(magnetProfilesQuery.data ?? []).map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </>
-      )}
+      renderFields={(form) => {
+        // Derived from magnet_count rather than its own stored field --
+        // "adhesive" is exactly the magnet_count===0 case the backend
+        // already treats as no magnets end-to-end (see build_label_parameters),
+        // so this is just a clearer UI for the same one value, not a second
+        // source of truth that could disagree with it.
+        const magnetCount = form.watch("magnet_count") as number;
+        const mountType: MountType = magnetCount > 0 ? "embedded_magnets" : "adhesive";
+        return (
+          <>
+            <TextField form={form} name="name" label="Name" />
+            <FieldRow>
+              <NumberField form={form} name="text_height_mm" label="Text height (mm)" step="0.001" />
+              <NumberField form={form} name="body_depth_mm" label="Body depth (mm)" step="0.01" />
+            </FieldRow>
+            <FieldRow>
+              <NumberField form={form} name="outline_offset_mm" label="Outline offset (mm)" step="0.01" />
+              <NumberField form={form} name="horizontal_scale" label="Horizontal scale" step="0.01" />
+            </FieldRow>
+            <FieldRow>
+              <TextField form={form} name="font_family" label="Font family" />
+              <TextField form={form} name="font_weight" label="Font weight" />
+            </FieldRow>
+            <FieldRow>
+              <TextField form={form} name="font_style" label="Font style" />
+              <NumberField form={form} name="minimum_width_mm" label="Minimum width (mm)" step="0.1" />
+            </FieldRow>
+            <NumberField form={form} name="fixed_width_mm" label="Fixed width (mm, optional)" step="0.1" />
+            <div className="flex flex-col gap-1">
+              <Label>Mount type</Label>
+              <Select
+                value={mountType}
+                onValueChange={(v) => {
+                  form.setValue("magnet_count", v === "adhesive" ? 0 : 2, { shouldValidate: true });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(MOUNT_TYPE_LABELS) as MountType[]).map((mt) => (
+                    <SelectItem key={mt} value={mt}>
+                      {MOUNT_TYPE_LABELS[mt]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {mountType === "embedded_magnets" && (
+              <>
+                <FieldRow>
+                  <NumberField
+                    form={form}
+                    name="magnet_count"
+                    label="Magnet count (minimum -- labels 6in+ long get more automatically)"
+                    step="1"
+                  />
+                  <NumberField form={form} name="magnet_edge_offset_mm" label="Magnet edge offset (mm)" step="0.1" />
+                </FieldRow>
+                <FieldRow>
+                  <NumberField form={form} name="magnet_minimum_bridge_mm" label="Magnet min. bridge (mm)" step="0.05" />
+                  <NumberField form={form} name="magnet_support_extra_mm" label="Magnet support extra (mm)" step="0.05" />
+                </FieldRow>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Default magnet profile
+                  </label>
+                  <Select
+                    value={form.watch("default_magnet_profile_id")}
+                    onValueChange={(v) => form.setValue("default_magnet_profile_id", v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="None" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(magnetProfilesQuery.data ?? []).map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+          </>
+        );
+      }}
     />
   );
 }
